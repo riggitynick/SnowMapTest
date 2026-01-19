@@ -76,46 +76,46 @@ function playDing() {
   // Geolocation
   if ('geolocation' in navigator) {
     //Old Desktop
-    // navigator.geolocation.watchPosition(
-
-
-
-    //   (position) => {
-    //     const lat = position.coords.latitude;
-    //     const lng = position.coords.longitude;
-
-    //     document.getElementById('status').textContent =
-    //       `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
-
-
-    //     if (!playerMarker) {
-    //       playerMarker = L.marker([lat, lng]).addTo(map);
-    //       map.setView([lat, lng], 15);
-    //     } else {
-    //       playerMarker.setLatLng([lat, lng]);
-    //     }
-    //   },
-    //   (error) => {
-    //     document.getElementById('status').textContent =
-    //       'Location error: ' + error.message;
-    //   },
-    //   {
-    //     enableHighAccuracy: true,
-    //     maximumAge: 1000,
-    //     timeout: 10000
-    //   }
-      
-    // );
-
     navigator.geolocation.watchPosition(
-  success,
-  error,
-  {
-    enableHighAccuracy: true,
-    maximumAge: 1000,
-    timeout: 10000
-  }
-);
+
+
+
+      (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+
+        document.getElementById('status').textContent =
+          `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
+
+
+        if (!playerMarker) {
+          playerMarker = L.marker([lat, lng]).addTo(map);
+          map.setView([lat, lng], 15);
+        } else {
+          playerMarker.setLatLng([lat, lng]);
+        }
+      },
+      (error) => {
+        document.getElementById('status').textContent =
+          'Location error: ' + error.message;
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 1000,
+        timeout: 10000
+      }
+      
+    );
+
+//     navigator.geolocation.watchPosition(
+//   success,
+//   error,
+//   {
+//     enableHighAccuracy: true,
+//     maximumAge: 1000,
+//     timeout: 10000
+//   }
+// );
 
 
 
