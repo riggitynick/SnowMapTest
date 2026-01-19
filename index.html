@@ -1,25 +1,32 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Free Map + GPS Test</title>
-  <meta name="viewport" content="initial-scale=1.0, width=device-width" />
+  <meta charset="UTF-8" />
+  <title>Location Collectibles Prototype</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- Leaflet -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
   />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
-    html, body {
+    body, html {
       margin: 0;
       padding: 0;
       height: 100%;
+      font-family: sans-serif;
     }
+
     #map {
-      width: 100%;
       height: 100%;
+      width: 100%;
     }
-    #status {
+
+    #status, #points {
       position: absolute;
-      top: 10px;
       left: 10px;
       background: rgba(0,0,0,0.7);
       color: white;
@@ -28,183 +35,181 @@
       font-size: 14px;
       z-index: 1000;
     }
-    #points {
-  position: absolute;
-  top: 50px;
-  left: 10px;
-  background: rgba(0,0,0,0.7);
-  color: white;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 14px;
-  z-index: 1000;
-}
+
+    #status { top: 10px; }
+    #points { top: 50px; }
+
+    #unlock {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 16px;
+      font-size: 14px;
+      z-index: 1000;
+    }
   </style>
 </head>
 <body>
-<!-- Test button ding for desktop-->
-<button onclick="ding.play()">Test Sound</button>
-<!-- End button test-->
 
-
-<div id="points">Points: 0</div>
-<div id="status">Locating...</div>
 <div id="map"></div>
+<div id="status">Initializing…</div>
+<div id="points">Points: 0</div>
+<button id="unlock">Tap to Enable Sound</button>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-    // Ding sound
-const ding = new Audio("https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg");
+  // --------------------
+  // BASIC STATE
+  // --------------------
+  let points = 0;
+  let playerLat = null;
+  let playerLng = null;
 
-function playDing() {
-  ding.currentTime = 0;
-  ding.play();
-}
+  function addPoints(amount) {
+    points += amount;
+    document.getElementById("points").textContent = `Points: ${points}`;
+  }
 
+  // --------------------
+  // AUDIO (UNLOCKED BY TAP)
+  // --------------------
+  const ding = new Audio(
+    "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"
+  );
 
-  // Create the map
-  const map = L.map('map').setView([0, 0], 15);
+  document.getElementById("unlock").addEventListener("click", () => {
+    ding.play().catch(() => {});
+    document.getElementById("unlock").style.display = "none";
+  });
 
-  // Add OpenStreetMap tiles (no API key, free)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 29
+  function playDing() {
+    ding.currentTime = 0;
+    ding.play();
+  }
+
+  // --------------------
+  // MAP SETUP
+  // --------------------
+  const map = L.map("map").setView([0, 0], 18);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19
   }).addTo(map);
 
-  // Marker for the player's location
-  let playerMarker = null;
+  const playerMarker = L.circleMarker([0, 0], {
+    radius: 8,
+    color: "cyan",
+    fillColor: "cyan",
+    fillOpacity: 1
+  }).addTo(map);
 
-  // Geolocation
-  if ('geolocation' in navigator) {
-    //Old Desktop
+  // --------------------
+  // COLLECTIBLES
+  // --------------------
+  const collectibles = Array.from({ length: 10 }, (_, i) => ({
+    id: i + 1,
+    lat: 0,
+    lng: 0,
+    radius: 30, // meters (large for testing)
+    points: 100,
+    collected: false,
+    marker: null
+  }));
+
+  map.on("click", (e) => {
+    const c = collectibles.find(x => x.lat === 0);
+    if (!c) {
+      alert("All collectibles placed!");
+      return;
+    }
+
+    c.lat = e.latlng.lat;
+    c.lng = e.latlng.lng;
+
+    c.marker = L.circleMarker([c.lat, c.lng], {
+      radius: 8,
+      color: "gold",
+      fillColor: "yellow",
+      fillOpacity: 0.9
+    }).addTo(map);
+
+    console.log("Placed collectible", c.id);
+  });
+
+  // --------------------
+  // DISTANCE FUNCTION
+  // --------------------
+  function distanceInMeters(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = x => x * Math.PI / 180;
+
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLng / 2) ** 2;
+
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // --------------------
+  // GPS GAME LOOP
+  // --------------------
+  function success(position) {
+    playerLat = position.coords.latitude;
+    playerLng = position.coords.longitude;
+
+    document.getElementById("status").textContent =
+      `Accuracy: ${Math.round(position.coords.accuracy)}m`;
+
+    playerMarker.setLatLng([playerLat, playerLng]);
+    map.setView([playerLat, playerLng]);
+
+    collectibles.forEach(c => {
+      if (c.collected || c.lat === 0) return;
+
+      const d = distanceInMeters(
+        playerLat,
+        playerLng,
+        c.lat,
+        c.lng
+      );
+
+      console.log(`Distance to ${c.id}:`, Math.round(d));
+
+      if (d < c.radius) {
+        c.collected = true;
+        addPoints(c.points);
+        map.removeLayer(c.marker);
+        playDing();
+      }
+    });
+  }
+
+  function error(err) {
+    document.getElementById("status").textContent =
+      "Location error";
+    console.error(err);
+  }
+
+  if ("geolocation" in navigator) {
     navigator.geolocation.watchPosition(
-
-
-
-      (position) => {
-        const lat = position.coords.latitude;
-        const lng = position.coords.longitude;
-
-        document.getElementById('status').textContent =
-          `Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}`;
-
-
-        if (!playerMarker) {
-          playerMarker = L.marker([lat, lng]).addTo(map);
-          map.setView([lat, lng], 15);
-        } else {
-          playerMarker.setLatLng([lat, lng]);
-        }
-      },
-      (error) => {
-        document.getElementById('status').textContent =
-          'Location error: ' + error.message;
-      },
+      success,
+      error,
       {
         enableHighAccuracy: true,
         maximumAge: 1000,
         timeout: 10000
       }
-      
     );
-
-//     navigator.geolocation.watchPosition(
-//   success,
-//   error,
-//   {
-//     enableHighAccuracy: true,
-//     maximumAge: 1000,
-//     timeout: 10000
-//   }
-// );
-
-
-
   } else {
-    document.getElementById('status').textContent =
+    document.getElementById("status").textContent =
       "Geolocation not supported";
-
-
-////
-  collectibles.forEach(c => {
-  if (c.collected || c.lat === 0) return;
-
-  const d = distanceInMeters(lat, lng, c.lat, c.lng);
-
-  if (d < c.radius) {
-    c.collected = true;
-    addPoints(c.points);
-    map.removeLayer(c.marker);
-    playDing();
   }
-});
-////
-
-  }
-
-  //Desktop Ding 
-  document.body.addEventListener('click', () => {
-  ding.play().catch(() => {});
-}, { once: true });
-
-
-
-  let points = 0;
-
-function addPoints(amount) {
-  points += amount;
-  document.getElementById('points').textContent = `Points: ${points}`;
-}
-
-const collectibles = [
-  { id: 1, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 2, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 3, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 4, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 5, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 6, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 7, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 8, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 9, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null },
-  { id: 10, lat: 0, lng: 0, radius: 15, points: 100, collected: false, marker: null }
-];
-map.on('click', (e) => {
-  const empty = collectibles.find(c => c.lat === 0 && c.lng === 0);
-  if (!empty) {
-    alert("All collectibles placed!");
-    return;
-  }
-
-  empty.lat = e.latlng.lat;
-  empty.lng = e.latlng.lng;
-
-  empty.marker = L.circleMarker([empty.lat, empty.lng], {
-    radius: 18,
-    color: 'gold',
-    fillColor: 'yellow',
-    fillOpacity: 0.9
-  }).addTo(map);
-
-  console.log(`Placed collectible ${empty.id} at`, empty.lat, empty.lng);
-});
-function distanceInMeters(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const toRad = x => x * Math.PI / 180;
-
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 </script>
-
-
-
 
 </body>
 </html>
