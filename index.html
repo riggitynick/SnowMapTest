@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Location Collectibles Prototype</title>
+  <title>AR Collectibles Prototype</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- Leaflet -->
@@ -13,7 +13,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
-    body, html {
+    html, body {
       margin: 0;
       padding: 0;
       height: 100%;
@@ -39,22 +39,17 @@
     #status { top: 10px; }
     #points { top: 50px; }
 
-    #unlock {
+    #unlock, #reset {
       position: absolute;
-      bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
-      padding: 10px 16px;
+      padding: 8px 14px;
       font-size: 14px;
       z-index: 1000;
     }
-    #reset {
-  position: absolute;
-  top: 90px;
-  left: 10px;
-  z-index: 1000;
-  padding: 6px 10px;
-}
+
+    #unlock { bottom: 60px; }
+    #reset { bottom: 20px; }
   </style>
 </head>
 <body>
@@ -62,27 +57,32 @@
 <div id="map"></div>
 <div id="status">Initializing…</div>
 <div id="points">Points: 0</div>
+<button id="unlock">Tap to Enable Sound</button>
 <button id="reset">Reset Points</button>
-
 
 <script>
   // --------------------
-  // BASIC STATE
+  // POINTS (PERSISTENT)
   // --------------------
   let points = parseInt(localStorage.getItem("points")) || 0;
-  let playerLat = null;
-  let playerLng = null;
-
-document.getElementById("points").textContent = `Points: ${points}`;
-
- function addPoints(amount) {
-  points += amount;
-  localStorage.setItem("points", points);
   document.getElementById("points").textContent = `Points: ${points}`;
-}
+
+  function addPoints(amount) {
+    points += amount;
+    localStorage.setItem("points", points);
+    document.getElementById("points").textContent = `Points: ${points}`;
+  }
+
+  document.getElementById("reset").addEventListener("click", () => {
+    if (confirm("Reset points?")) {
+      points = 0;
+      localStorage.setItem("points", points);
+      document.getElementById("points").textContent = `Points: ${points}`;
+    }
+  });
 
   // --------------------
-  // AUDIO (UNLOCKED BY TAP)
+  // AUDIO
   // --------------------
   const ding = new Audio(
     "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"
@@ -99,7 +99,7 @@ document.getElementById("points").textContent = `Points: ${points}`;
   }
 
   // --------------------
-  // MAP SETUP
+  // MAP
   // --------------------
   const map = L.map("map").setView([0, 0], 18);
 
@@ -121,7 +121,7 @@ document.getElementById("points").textContent = `Points: ${points}`;
     id: i + 1,
     lat: 0,
     lng: 0,
-    radius: 30, // meters (large for testing)
+    radius: 30,
     points: 100,
     collected: false,
     marker: null
@@ -143,12 +143,10 @@ document.getElementById("points").textContent = `Points: ${points}`;
       fillColor: "yellow",
       fillOpacity: 0.9
     }).addTo(map);
-
-    console.log("Placed collectible", c.id);
   });
 
   // --------------------
-  // DISTANCE FUNCTION
+  // DISTANCE MATH
   // --------------------
   function distanceInMeters(lat1, lng1, lat2, lng2) {
     const R = 6371000;
@@ -160,8 +158,8 @@ document.getElementById("points").textContent = `Points: ${points}`;
     const a =
       Math.sin(dLat / 2) ** 2 +
       Math.cos(toRad(lat1)) *
-        Math.cos(toRad(lat2)) *
-        Math.sin(dLng / 2) ** 2;
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) ** 2;
 
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
@@ -170,26 +168,19 @@ document.getElementById("points").textContent = `Points: ${points}`;
   // GPS GAME LOOP
   // --------------------
   function success(position) {
-    playerLat = position.coords.latitude;
-    playerLng = position.coords.longitude;
+    const lat = position.coords.latitude;
+    const lng = position.coords.longitude;
 
     document.getElementById("status").textContent =
       `Accuracy: ${Math.round(position.coords.accuracy)}m`;
 
-    playerMarker.setLatLng([playerLat, playerLng]);
-    map.setView([playerLat, playerLng]);
+    playerMarker.setLatLng([lat, lng]);
+    map.setView([lat, lng]);
 
     collectibles.forEach(c => {
       if (c.collected || c.lat === 0) return;
 
-      const d = distanceInMeters(
-        playerLat,
-        playerLng,
-        c.lat,
-        c.lng
-      );
-
-      console.log(`Distance to ${c.id}:`, Math.round(d));
+      const d = distanceInMeters(lat, lng, c.lat, c.lng);
 
       if (d < c.radius) {
         c.collected = true;
@@ -201,9 +192,8 @@ document.getElementById("points").textContent = `Points: ${points}`;
   }
 
   function error(err) {
-    document.getElementById("status").textContent =
-      "Location error";
     console.error(err);
+    document.getElementById("status").textContent = "Location error";
   }
 
   if ("geolocation" in navigator) {
@@ -220,17 +210,6 @@ document.getElementById("points").textContent = `Points: ${points}`;
     document.getElementById("status").textContent =
       "Geolocation not supported";
   }
-
-  // Reset Points
-  document.getElementById("reset").addEventListener("click", () => {
-  if (confirm("Reset points?")) {
-    points = 0;
-    localStorage.setItem("points", points);
-    document.getElementById("points").textContent = `Points: ${points}`;
-  }
-});
-
-
 </script>
 
 </body>
