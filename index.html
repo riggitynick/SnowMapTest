@@ -48,6 +48,13 @@
       font-size: 14px;
       z-index: 1000;
     }
+    #reset {
+  position: absolute;
+  top: 90px;
+  left: 10px;
+  z-index: 1000;
+  padding: 6px 10px;
+}
   </style>
 </head>
 <body>
@@ -55,20 +62,24 @@
 <div id="map"></div>
 <div id="status">Initializing…</div>
 <div id="points">Points: 0</div>
-<button id="unlock">Tap to Enable Sound</button>
+<button id="reset">Reset Points</button>
+
 
 <script>
   // --------------------
   // BASIC STATE
   // --------------------
-  let points = 0;
+  let points = parseInt(localStorage.getItem("points")) || 0;
   let playerLat = null;
   let playerLng = null;
 
-  function addPoints(amount) {
-    points += amount;
-    document.getElementById("points").textContent = `Points: ${points}`;
-  }
+document.getElementById("points").textContent = `Points: ${points}`;
+
+ function addPoints(amount) {
+  points += amount;
+  localStorage.setItem("points", points);
+  document.getElementById("points").textContent = `Points: ${points}`;
+}
 
   // --------------------
   // AUDIO (UNLOCKED BY TAP)
@@ -209,6 +220,17 @@
     document.getElementById("status").textContent =
       "Geolocation not supported";
   }
+
+  // Reset Points
+  document.getElementById("reset").addEventListener("click", () => {
+  if (confirm("Reset points?")) {
+    points = 0;
+    localStorage.setItem("points", points);
+    document.getElementById("points").textContent = `Points: ${points}`;
+  }
+});
+
+
 </script>
 
 </body>
