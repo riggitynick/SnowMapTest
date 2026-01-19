@@ -38,6 +38,18 @@
 
     #status { top: 10px; }
     #points { top: 50px; }
+    #level {
+  position: absolute;
+  top: 90px;
+  left: 10px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  z-index: 1000;
+}
+
 
     #unlock, #reset {
       position: absolute;
@@ -57,6 +69,8 @@
 <div id="map"></div>
 <div id="status">Initializing…</div>
 <div id="points">Points: 0</div>
+<div id="level">Level: 1</div>
+
 <button id="unlock">Tap to Enable Sound</button>
 <button id="reset">Reset Points</button>
 
@@ -67,11 +81,31 @@
   let points = parseInt(localStorage.getItem("points")) || 0;
   document.getElementById("points").textContent = `Points: ${points}`;
 
-  function addPoints(amount) {
-    points += amount;
-    localStorage.setItem("points", points);
-    document.getElementById("points").textContent = `Points: ${points}`;
+function addPoints(amount) {
+  points += amount;
+  localStorage.setItem("points", points);
+  document.getElementById("points").textContent = `Points: ${points}`;
+  checkLevelUp();
+}
+
+
+  function checkLevelUp() {
+  const newLevel = Math.floor(points / 500) + 1;
+
+  if (newLevel > level) {
+    level = newLevel;
+    localStorage.setItem("level", level);
+    document.getElementById("level").textContent = `Level: ${level}`;
+    playDing();
+    console.log("LEVEL UP! You are now level", level);
   }
+}
+
+
+  // Level Storage
+  let level = parseInt(localStorage.getItem("level")) || 1;
+document.getElementById("level").textContent = `Level: ${level}`;
+
 
   document.getElementById("reset").addEventListener("click", () => {
     if (confirm("Reset points?")) {
