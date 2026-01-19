@@ -1,337 +1,237 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>AR Collectibles Prototype</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8">
+<title>AR Collectibles Prototype</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      font-family: sans-serif;
-    }
+<style>
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+#map { height: 100%; }
 
-    #map {
-      height: 100%;
-      width: 100%;
-    }
-
-    #status, #points {
-      position: absolute;
-      left: 10px;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      padding: 6px 10px;
-      border-radius: 6px;
-      font-size: 14px;
-      z-index: 1000;
-    }
-
-    #status { top: 10px; }
-    #points { top: 50px; }
-    #level {
-  position: absolute;
-  top: 90px;
+#hud {
+  position: fixed;
+  top: 10px;
   left: 10px;
   background: rgba(0,0,0,0.7);
   color: white;
-  padding: 6px 10px;
-  border-radius: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-family: system-ui, sans-serif;
   font-size: 14px;
   z-index: 1000;
 }
-
-
-    #unlock, #reset {
-      position: absolute;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 8px 14px;
-      font-size: 14px;
-      z-index: 1000;
-    }
-
-    #unlock { bottom: 60px; }
-    #reset { bottom: 20px; }
-
-    #resetItems {
-  position: absolute;
-  bottom: 100px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 8px 14px;
-  z-index: 1000;
-}
-  </style>
+#streak { color: orange; font-weight: bold; }
+#challenge { margin-top: 8px; font-size: 13px; }
+#challenge.done { color: lime; }
+</style>
 </head>
+
 <body>
-
 <div id="map"></div>
-<div id="status">Initializing…</div>
-<div id="points">Points: 0</div>
-<div id="level">Level: 1</div>
-<div id="streak"></div>
 
+<div id="hud">
+  <div id="level"></div>
+  <div id="points"></div>
+  <div id="streak"></div>
+  <div id="challenge"></div>
+</div>
 
-<button id="unlock">Tap to Enable Sound</button>
-<button id="resetItems">Reset Items</button>
-<button id="reset">Reset Points</button>
+<audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
 <script>
-//TRACK THE LAST ACTIVE DAY
-const todayKey = new Date().toDateString();
-const lastPlayDay = localStorage.getItem("lastPlayDay");
+/***********************
+ * HELPERS
+ ***********************/
+const getInt = (k,d)=>isNaN(parseInt(localStorage.getItem(k)))?d:parseInt(localStorage.getItem(k));
+const today = new Date().toDateString();
 
+/***********************
+ * STATE
+ ***********************/
+let points = getInt("points",0);
+let level = getInt("level",1);
+let streak = getInt("streak",1);
+let lastDay = localStorage.getItem("lastDay");
+let collectedIds = JSON.parse(localStorage.getItem("collectedIds")||"[]");
 
-  // --------------------
-  // POINTS (PERSISTENT)
-  // --------------------
-  let points = parseInt(localStorage.getItem("points")) || 0;
-  document.getElementById("points").textContent = `Points: ${points}`;
-
-function addPoints(amount) {
-  points += amount;
-  localStorage.setItem("points", points);
-  document.getElementById("points").textContent = `Points: ${points}`;
-  checkLevelUp();
+/***********************
+ * DAILY RESET
+ ***********************/
+if(!lastDay){
+  localStorage.setItem("lastDay", today);
+  localStorage.setItem("streak", streak);
+}else if(lastDay !== today){
+  streak++;
+  localStorage.setItem("streak", streak);
+  localStorage.setItem("lastDay", today);
+  collectedIds = [];
+  localStorage.removeItem("collectedIds");
+  localStorage.removeItem("dailyChallenge");
+  localStorage.removeItem("dailyProgress");
+  localStorage.removeItem("dailyDone");
 }
 
-
-  function checkLevelUp() {
-  const newLevel = Math.floor(points / 500) + 1;
-
-  if (newLevel > level) {
-    level = newLevel;
-    localStorage.setItem("level", level);
-    document.getElementById("level").textContent = `Level: ${level}`;
-    playDing();
-    console.log("LEVEL UP! You are now level", level);
-  }
-}
-
-//RARITY
+/***********************
+ * RARITIES
+ ***********************/
 const RARITIES = {
-  common: { color: "yellow", points: 100, minLevel: 1 },
-  rare: { color: "deepskyblue", points: 250, minLevel: 2 },
-  epic: { color: "violet", points: 500, minLevel: 4 }
+  common:{color:"yellow",points:100},
+  rare:{color:"deepskyblue",points:250},
+  epic:{color:"violet",points:500}
 };
 
+/***********************
+ * DAILY CHALLENGE
+ ***********************/
+const challengeTypes = [
+  { id:"collect_common", text:"Collect 3 Common items", target:3 },
+  { id:"collect_rare", text:"Collect 1 Rare item", target:1 },
+  { id:"earn_points", text:"Earn 500 points", target:500 }
+];
 
-  // LEVEL STORAGE
-  let level = parseInt(localStorage.getItem("level")) || 1;
-document.getElementById("level").textContent = `Level: ${level}`;
+let dailyChallenge = JSON.parse(localStorage.getItem("dailyChallenge"));
+let dailyProgress = getInt("dailyProgress",0);
+let dailyDone = localStorage.getItem("dailyDone")==="true";
 
+if(!dailyChallenge){
+  dailyChallenge = challengeTypes[Math.floor(Math.random()*challengeTypes.length)];
+  localStorage.setItem("dailyChallenge", JSON.stringify(dailyChallenge));
+  localStorage.setItem("dailyProgress", 0);
+  localStorage.setItem("dailyDone", "false");
+}
 
-  document.getElementById("reset").addEventListener("click", () => {
-    if (confirm("Reset points?")) {
-      points = 0;
-      localStorage.setItem("points", points);
-      document.getElementById("points").textContent = `Points: ${points}`;
+/***********************
+ * MAP
+ ***********************/
+const map = L.map("map").setView([0,0],18);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+let playerMarker=null;
+
+/***********************
+ * UI
+ ***********************/
+function updateUI(){
+  level = Math.floor(points/500)+1;
+  localStorage.setItem("points",points);
+  localStorage.setItem("level",level);
+  document.getElementById("level").textContent=`Level ${level}`;
+  document.getElementById("points").textContent=`Points ${points}`;
+  document.getElementById("streak").textContent=`🔥 ${streak} Day Streak`;
+
+  const c = document.getElementById("challenge");
+  if(dailyDone){
+    c.textContent=`✅ ${dailyChallenge.text}`;
+    c.className="done";
+  }else{
+    c.textContent=`🎯 ${dailyChallenge.text} (${dailyProgress}/${dailyChallenge.target})`;
+    c.className="";
+  }
+}
+updateUI();
+
+/***********************
+ * CHALLENGE CHECK
+ ***********************/
+function checkChallenge(type, amount=1){
+  if(dailyDone) return;
+  if(dailyChallenge.id===type){
+    dailyProgress += amount;
+    localStorage.setItem("dailyProgress", dailyProgress);
+    if(dailyProgress>=dailyChallenge.target){
+      dailyDone=true;
+      localStorage.setItem("dailyDone","true");
+      points += 300;
+      playDing();
+    }
+    updateUI();
+  }
+}
+
+/***********************
+ * AUDIO
+ ***********************/
+function playDing(){
+  document.getElementById("ding").play();
+}
+
+/***********************
+ * COLLECTIBLES
+ ***********************/
+const collectibles=[];
+
+map.on("click",e=>{
+  let r="common";
+  const roll=Math.random();
+  if(roll>0.9) r="epic";
+  else if(roll>0.7) r="rare";
+
+  const c={
+    id:Date.now(),
+    lat:e.latlng.lat,
+    lng:e.latlng.lng,
+    rarity:r,
+    collected:false,
+    marker:null
+  };
+
+  c.marker=L.circleMarker([c.lat,c.lng],{
+    radius:9,
+    color:RARITIES[r].color,
+    fillColor:RARITIES[r].color,
+    fillOpacity:0.9
+  }).addTo(map);
+
+  collectibles.push(c);
+});
+
+/***********************
+ * GPS + PICKUP
+ ***********************/
+function dist(a,b,c,d){
+  const R=6371000;
+  const toRad=x=>x*Math.PI/180;
+  const dLat=toRad(c-a);
+  const dLng=toRad(d-b);
+  const x=Math.sin(dLat/2)**2+
+    Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+
+navigator.geolocation.watchPosition(pos=>{
+  const lat=pos.coords.latitude;
+  const lng=pos.coords.longitude;
+
+  if(!playerMarker){
+    playerMarker=L.circleMarker([lat,lng],{radius:6,color:"lime",fillOpacity:1}).addTo(map);
+    map.setView([lat,lng],18);
+  }else{
+    playerMarker.setLatLng([lat,lng]);
+  }
+
+  collectibles.forEach(c=>{
+    if(c.collected) return;
+    if(dist(lat,lng,c.lat,c.lng)<25){
+      c.collected=true;
+      map.removeLayer(c.marker);
+      points+=RARITIES[c.rarity].points;
+      playDing();
+
+      if(c.rarity==="common") checkChallenge("collect_common");
+      if(c.rarity==="rare") checkChallenge("collect_rare");
+      checkChallenge("earn_points", RARITIES[c.rarity].points);
+
+      updateUI();
     }
   });
-
-  //WORLD MEMORY
-  let collectedIds = JSON.parse(localStorage.getItem("collectedIds")) || [];
-
-  //DETECT A NEW DAY
-  if (lastPlayDay !== todayKey) {
-  // New day
-  localStorage.setItem("lastPlayDay", todayKey);
-  localStorage.removeItem("collectedIds");
-  collectedIds = [];
-
-  // DAILY STREAK
-  let streak = parseInt(localStorage.getItem("streak") || "0");
-  streak += 1;
-  localStorage.setItem("streak", streak);
-}
-
-//SHOW DAILY STREAK
-const streak = localStorage.getItem("streak") || 1;
-document.getElementById("streak").textContent = `🔥 ${streak} day streak`;
-
-//DAILY BONUS
-if (streak % 7 === 0) {
-  addPoints(500);
-}
-
-
-  // --------------------
-  // AUDIO
-  // --------------------
-  const ding = new Audio(
-    "https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"
-  );
-
-  document.getElementById("unlock").addEventListener("click", () => {
-    ding.play().catch(() => {});
-    document.getElementById("unlock").style.display = "none";
-  });
-
-  function playDing() {
-    ding.currentTime = 0;
-    ding.play();
-  }
-
-  // --------------------
-  // MAP
-  // --------------------
-  const map = L.map("map").setView([0, 0], 18);
-
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19
-  }).addTo(map);
-
-  const playerMarker = L.circleMarker([0, 0], {
-    radius: 8,
-    color: "cyan",
-    fillColor: "cyan",
-    fillOpacity: 1
-  }).addTo(map);
-
-  // --------------------
-  // COLLECTIBLES
-  // --------------------
-const collectibles = Array.from({ length: 10 }, (_, i) => {
-  const id = i + 1;
-
-  const rarityRoll = Math.random();
-  let rarity = "common";
-  if (rarityRoll > 0.9) rarity = "epic";
-  else if (rarityRoll > 0.7) rarity = "rare";
-
-  return {
-    id,
-    rarity,
-    lat: 0,
-    lng: 0,
-    radius: 30,
-    points: RARITIES[rarity].points,
-    minLevel: RARITIES[rarity].minLevel,
-    collected: collectedIds.includes(id),
-    marker: null
-  };
-});
-
-
-
-map.on("click", (e) => {
-  const c = collectibles.find(x => x.lat === 0 && !x.collected);
-  if (!c) {
-    alert("All collectibles placed!");
-    return;
-  }
-
-  c.lat = e.latlng.lat;
-  c.lng = e.latlng.lng;
-
-  if (c.collected) return;
-
-  c.marker = L.circleMarker([c.lat, c.lng], {
-  radius: 9,
-  color: RARITIES[c.rarity].color,
-  fillColor: RARITIES[c.rarity].color,
-  fillOpacity: 0.9
-}).addTo(map);
-
-});
-
-
-  // --------------------
-  // DISTANCE MATH
-  // --------------------
-  function distanceInMeters(lat1, lng1, lat2, lng2) {
-    const R = 6371000;
-    const toRad = x => x * Math.PI / 180;
-
-    const dLat = toRad(lat2 - lat1);
-    const dLng = toRad(lng2 - lng1);
-
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) *
-      Math.cos(toRad(lat2)) *
-      Math.sin(dLng / 2) ** 2;
-
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  }
-
-  // --------------------
-  // GPS GAME LOOP
-  // --------------------
-  function success(position) {
-    const lat = position.coords.latitude;
-    const lng = position.coords.longitude;
-
-    document.getElementById("status").textContent =
-      `Accuracy: ${Math.round(position.coords.accuracy)}m`;
-
-    playerMarker.setLatLng([lat, lng]);
-    map.setView([lat, lng]);
-
-    collectibles.forEach(c => {
-      if (c.collected || c.lat === 0) return;
-
-      const d = distanceInMeters(lat, lng, c.lat, c.lng);
-
-if (d < c.radius) {
-  if (level < c.minLevel) {
-    console.log("Level too low for this item");
-    return;
-  }
-
-  c.collected = true;
-  collectedIds.push(c.id);
-  localStorage.setItem("collectedIds", JSON.stringify(collectedIds));
-  addPoints(c.points);
-  map.removeLayer(c.marker);
-  playDing();
-}
-
-
-    });
-  }
-
-  function error(err) {
-    console.error(err);
-    document.getElementById("status").textContent =
-  `Level ${level} | Accuracy ${Math.round(position.coords.accuracy)}m`;
-
-  }
-
-  if ("geolocation" in navigator) {
-    navigator.geolocation.watchPosition(
-      success,
-      error,
-      {
-        enableHighAccuracy: true,
-        maximumAge: 1000,
-        timeout: 10000
-      }
-    );
-  } else {
-    document.getElementById("status").textContent =
-      "Geolocation not supported";
-  }
-
-  document.getElementById("resetItems").addEventListener("click", () => {
-  if (confirm("Reset collected items?")) {
-    localStorage.removeItem("collectedIds");
-    location.reload();
-  }
-});
-
-
+},{enableHighAccuracy:true});
 </script>
-
 </body>
 </html>
