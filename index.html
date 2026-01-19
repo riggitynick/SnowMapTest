@@ -62,6 +62,15 @@
 
     #unlock { bottom: 60px; }
     #reset { bottom: 20px; }
+
+    #resetItems {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  z-index: 1000;
+}
   </style>
 </head>
 <body>
@@ -72,6 +81,7 @@
 <div id="level">Level: 1</div>
 
 <button id="unlock">Tap to Enable Sound</button>
+<button id="resetItems">Reset Items</button>
 <button id="reset">Reset Points</button>
 
 <script>
@@ -102,7 +112,7 @@ function addPoints(amount) {
 }
 
 
-  // Level Storage
+  // LEVEL STORAGE
   let level = parseInt(localStorage.getItem("level")) || 1;
 document.getElementById("level").textContent = `Level: ${level}`;
 
@@ -114,6 +124,10 @@ document.getElementById("level").textContent = `Level: ${level}`;
       document.getElementById("points").textContent = `Points: ${points}`;
     }
   });
+
+  //WORLD MEMORY
+  let collectedIds = JSON.parse(localStorage.getItem("collectedIds")) || [];
+
 
   // --------------------
   // AUDIO
@@ -151,33 +165,40 @@ document.getElementById("level").textContent = `Level: ${level}`;
   // --------------------
   // COLLECTIBLES
   // --------------------
-  const collectibles = Array.from({ length: 10 }, (_, i) => ({
-    id: i + 1,
+  const collectibles = Array.from({ length: 10 }, (_, i) => {
+  const id = i + 1;
+  return {
+    id,
     lat: 0,
     lng: 0,
     radius: 30,
     points: 100,
-    collected: false,
+    collected: collectedIds.includes(id),
     marker: null
-  }));
+  };
+});
 
-  map.on("click", (e) => {
-    const c = collectibles.find(x => x.lat === 0);
-    if (!c) {
-      alert("All collectibles placed!");
-      return;
-    }
 
-    c.lat = e.latlng.lat;
-    c.lng = e.latlng.lng;
+map.on("click", (e) => {
+  const c = collectibles.find(x => x.lat === 0 && !x.collected);
+  if (!c) {
+    alert("All collectibles placed!");
+    return;
+  }
 
-    c.marker = L.circleMarker([c.lat, c.lng], {
-      radius: 8,
-      color: "gold",
-      fillColor: "yellow",
-      fillOpacity: 0.9
-    }).addTo(map);
-  });
+  c.lat = e.latlng.lat;
+  c.lng = e.latlng.lng;
+
+  if (c.collected) return;
+
+  c.marker = L.circleMarker([c.lat, c.lng], {
+    radius: 8,
+    color: "gold",
+    fillColor: "yellow",
+    fillOpacity: 0.9
+  }).addTo(map);
+});
+
 
   // --------------------
   // DISTANCE MATH
@@ -216,12 +237,15 @@ document.getElementById("level").textContent = `Level: ${level}`;
 
       const d = distanceInMeters(lat, lng, c.lat, c.lng);
 
-      if (d < c.radius) {
-        c.collected = true;
-        addPoints(c.points);
-        map.removeLayer(c.marker);
-        playDing();
-      }
+    if (d < c.radius) {
+  c.collected = true;
+  collectedIds.push(c.id);
+  localStorage.setItem("collectedIds", JSON.stringify(collectedIds));
+  addPoints(c.points);
+  map.removeLayer(c.marker);
+  playDing();
+}
+
     });
   }
 
@@ -244,6 +268,15 @@ document.getElementById("level").textContent = `Level: ${level}`;
     document.getElementById("status").textContent =
       "Geolocation not supported";
   }
+
+  document.getElementById("resetItems").addEventListener("click", () => {
+  if (confirm("Reset collected items?")) {
+    localStorage.removeItem("collectedIds");
+    location.reload();
+  }
+});
+
+
 </script>
 
 </body>
