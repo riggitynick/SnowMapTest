@@ -79,12 +79,19 @@
 <div id="status">Initializing…</div>
 <div id="points">Points: 0</div>
 <div id="level">Level: 1</div>
+<div id="streak"></div>
+
 
 <button id="unlock">Tap to Enable Sound</button>
 <button id="resetItems">Reset Items</button>
 <button id="reset">Reset Points</button>
 
 <script>
+//TRACK THE LAST ACTIVE DAY
+const todayKey = new Date().toDateString();
+const lastPlayDay = localStorage.getItem("lastPlayDay");
+
+
   // --------------------
   // POINTS (PERSISTENT)
   // --------------------
@@ -111,6 +118,13 @@ function addPoints(amount) {
   }
 }
 
+//RARITY
+const RARITIES = {
+  common: { color: "yellow", points: 100, minLevel: 1 },
+  rare: { color: "deepskyblue", points: 250, minLevel: 2 },
+  epic: { color: "violet", points: 500, minLevel: 4 }
+};
+
 
   // LEVEL STORAGE
   let level = parseInt(localStorage.getItem("level")) || 1;
@@ -127,6 +141,28 @@ document.getElementById("level").textContent = `Level: ${level}`;
 
   //WORLD MEMORY
   let collectedIds = JSON.parse(localStorage.getItem("collectedIds")) || [];
+
+  //DETECT A NEW DAY
+  if (lastPlayDay !== todayKey) {
+  // New day
+  localStorage.setItem("lastPlayDay", todayKey);
+  localStorage.removeItem("collectedIds");
+  collectedIds = [];
+
+  // DAILY STREAK
+  let streak = parseInt(localStorage.getItem("streak") || "0");
+  streak += 1;
+  localStorage.setItem("streak", streak);
+}
+
+//SHOW DAILY STREAK
+const streak = localStorage.getItem("streak") || 1;
+document.getElementById("streak").textContent = `🔥 ${streak} day streak`;
+
+//DAILY BONUS
+if (streak % 7 === 0) {
+  addPoints(500);
+}
 
 
   // --------------------
@@ -165,18 +201,27 @@ document.getElementById("level").textContent = `Level: ${level}`;
   // --------------------
   // COLLECTIBLES
   // --------------------
-  const collectibles = Array.from({ length: 10 }, (_, i) => {
+const collectibles = Array.from({ length: 10 }, (_, i) => {
   const id = i + 1;
+
+  const rarityRoll = Math.random();
+  let rarity = "common";
+  if (rarityRoll > 0.9) rarity = "epic";
+  else if (rarityRoll > 0.7) rarity = "rare";
+
   return {
     id,
+    rarity,
     lat: 0,
     lng: 0,
     radius: 30,
-    points: 100,
+    points: RARITIES[rarity].points,
+    minLevel: RARITIES[rarity].minLevel,
     collected: collectedIds.includes(id),
     marker: null
   };
 });
+
 
 
 map.on("click", (e) => {
@@ -192,11 +237,12 @@ map.on("click", (e) => {
   if (c.collected) return;
 
   c.marker = L.circleMarker([c.lat, c.lng], {
-    radius: 8,
-    color: "gold",
-    fillColor: "yellow",
-    fillOpacity: 0.9
-  }).addTo(map);
+  radius: 9,
+  color: RARITIES[c.rarity].color,
+  fillColor: RARITIES[c.rarity].color,
+  fillOpacity: 0.9
+}).addTo(map);
+
 });
 
 
@@ -237,7 +283,12 @@ map.on("click", (e) => {
 
       const d = distanceInMeters(lat, lng, c.lat, c.lng);
 
-    if (d < c.radius) {
+if (d < c.radius) {
+  if (level < c.minLevel) {
+    console.log("Level too low for this item");
+    return;
+  }
+
   c.collected = true;
   collectedIds.push(c.id);
   localStorage.setItem("collectedIds", JSON.stringify(collectedIds));
@@ -246,12 +297,15 @@ map.on("click", (e) => {
   playDing();
 }
 
+
     });
   }
 
   function error(err) {
     console.error(err);
-    document.getElementById("status").textContent = "Location error";
+    document.getElementById("status").textContent =
+  `Level ${level} | Accuracy ${Math.round(position.coords.accuracy)}m`;
+
   }
 
   if ("geolocation" in navigator) {
