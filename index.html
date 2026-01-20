@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AR Collectibles + Radar</title>
+<title>AR Outdoor Game</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -12,7 +12,6 @@
 html, body { margin:0; padding:0; height:100%; }
 #map { height:100%; }
 
-/* HUD */
 #hud {
   position: fixed;
   top: 10px;
@@ -22,11 +21,9 @@ html, body { margin:0; padding:0; height:100%; }
   padding: 12px;
   border-radius: 12px;
   font-family: system-ui, sans-serif;
-  font-size: 14px;
   z-index: 1000;
 }
 
-/* Radar */
 #radar {
   position: fixed;
   bottom: 20px;
@@ -34,8 +31,8 @@ html, body { margin:0; padding:0; height:100%; }
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  background: radial-gradient(circle at center, #0f0 2px, rgba(0,255,0,0.15) 2px);
   border: 2px solid lime;
+  background: rgba(0,255,0,0.08);
   z-index: 1000;
   overflow: hidden;
 }
@@ -69,6 +66,7 @@ html, body { margin:0; padding:0; height:100%; }
 <div id="hud">
   <div id="level"></div>
   <div id="points"></div>
+  <div id="streak"></div>
 </div>
 
 <div id="radar"></div>
@@ -77,11 +75,23 @@ html, body { margin:0; padding:0; height:100%; }
 <audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
 <script>
-/***********************
- * STATE
- ***********************/
+/* =====================
+   STATE
+===================== */
 let points = parseInt(localStorage.getItem("points")) || 0;
 let level = parseInt(localStorage.getItem("level")) || 1;
+
+/* Daily streak */
+const today = new Date().toDateString();
+const lastDay = localStorage.getItem("lastPlayDay");
+
+let streak = parseInt(localStorage.getItem("streak")) || 0;
+
+if (lastDay !== today) {
+  streak += 1;
+  localStorage.setItem("streak", streak);
+  localStorage.setItem("lastPlayDay", today);
+}
 
 const RARITIES = {
   common: { color: "yellow", points: 100 },
@@ -93,9 +103,9 @@ const collectibles = [];
 let playerLat = null;
 let playerLng = null;
 
-/***********************
- * MAP
- ***********************/
+/* =====================
+   MAP
+===================== */
 const map = L.map("map");
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19
@@ -104,9 +114,20 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 let playerMarker = null;
 let centered = false;
 
-/***********************
- * UI
- ***********************/
+/* =====================
+   BIOME ZONES
+===================== */
+const biomes = [
+  {
+    name: "Park",
+    rarityBoost: { rare: 0.15, epic: 0.05 },
+    circle: null
+  }
+];
+
+/* =====================
+   UI
+===================== */
 function updateUI() {
   level = Math.floor(points / 500) + 1;
   localStorage.setItem("points", points);
@@ -114,17 +135,15 @@ function updateUI() {
 
   document.getElementById("level").textContent = `Level ${level}`;
   document.getElementById("points").textContent = `Points ${points}`;
+  document.getElementById("streak").textContent = `🔥 ${streak} Day Streak`;
 }
 updateUI();
 
-/***********************
- * AUDIO
- ***********************/
+/* =====================
+   HELPERS
+===================== */
 const playDing = () => document.getElementById("ding").play();
 
-/***********************
- * DISTANCE + BEARING
- ***********************/
 function distance(a,b,c,d){
   const R=6371000,toRad=x=>x*Math.PI/180;
   const dLat=toRad(c-a),dLng=toRad(d-b);
@@ -141,48 +160,48 @@ function bearing(lat1,lon1,lat2,lon2){
   return (toDeg(Math.atan2(y,x))+360)%360;
 }
 
-/***********************
- * RADAR
- ***********************/
+/* =====================
+   RADAR
+===================== */
 function updateRadar(){
   const radar=document.getElementById("radar");
   radar.innerHTML="";
-
   if(playerLat===null) return;
 
-  const maxRange=100; // meters
+  const maxRange=120;
   const size=140;
   const center=size/2;
 
   collectibles.forEach(c=>{
     if(c.collected) return;
-
     const d=distance(playerLat,playerLng,c.lat,c.lng);
     if(d>maxRange) return;
 
     const angle=bearing(playerLat,playerLng,c.lat,c.lng)*Math.PI/180;
     const r=(d/maxRange)*(center-8);
 
-    const x=center + r*Math.sin(angle);
-    const y=center - r*Math.cos(angle);
-
     const dot=document.createElement("div");
     dot.className="radar-dot";
-    dot.style.left=x+"px";
-    dot.style.top=y+"px";
+    dot.style.left=(center + r*Math.sin(angle))+"px";
+    dot.style.top=(center - r*Math.cos(angle))+"px";
     dot.style.background=RARITIES[c.rarity].color;
     radar.appendChild(dot);
   });
 }
 
-/***********************
- * COLLECTIBLES (tap map)
- ***********************/
+/* =====================
+   ADD COLLECTIBLES
+===================== */
 map.on("click",e=>{
   let rarity="common";
-  const roll=Math.random();
-  if(roll>0.9) rarity="epic";
-  else if(roll>0.7) rarity="rare";
+  let roll=Math.random();
+
+  biomes.forEach(b=>{
+    if(b.circle && b.circle.getBounds().contains(e.latlng)){
+      if(roll > 0.8) rarity="rare";
+      if(roll > 0.95) rarity="epic";
+    }
+  });
 
   const c={
     lat:e.latlng.lat,
@@ -194,16 +213,15 @@ map.on("click",e=>{
   c.marker=L.circleMarker([c.lat,c.lng],{
     radius:9,
     color:RARITIES[rarity].color,
-    fillColor:RARITIES[rarity].color,
     fillOpacity:0.9
   }).addTo(map);
 
   collectibles.push(c);
 });
 
-/***********************
- * GPS
- ***********************/
+/* =====================
+   GPS (higher responsiveness)
+===================== */
 navigator.geolocation.watchPosition(pos=>{
   playerLat=pos.coords.latitude;
   playerLng=pos.coords.longitude;
@@ -215,18 +233,26 @@ navigator.geolocation.watchPosition(pos=>{
     playerMarker=L.circleMarker([playerLat,playerLng],{
       radius:6,color:"lime",fillOpacity:1
     }).addTo(map);
-  }else{
+  } else {
     playerMarker.setLatLng([playerLat,playerLng]);
   }
 
   if(!centered){
     map.setView([playerLat,playerLng],18);
     centered=true;
+
+    /* Create a sample biome */
+    const park=L.circle([playerLat,playerLng],{
+      radius:80,
+      color:"green",
+      fillOpacity:0.1
+    }).addTo(map);
+    biomes[0].circle=park;
   }
 
   collectibles.forEach(c=>{
     if(c.collected) return;
-    if(distance(playerLat,playerLng,c.lat,c.lng)<25){
+    if(distance(playerLat,playerLng,c.lat,c.lng)<30){
       c.collected=true;
       map.removeLayer(c.marker);
       points+=RARITIES[c.rarity].points;
@@ -236,9 +262,10 @@ navigator.geolocation.watchPosition(pos=>{
   });
 
   updateRadar();
-},
-err=>{
-  document.getElementById("status").textContent="❌ GPS unavailable";
+},{
+  enableHighAccuracy:true,
+  maximumAge:0,
+  timeout:5000
 });
 </script>
 </body>
