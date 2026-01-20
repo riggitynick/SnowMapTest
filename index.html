@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>AR Outdoor Game</title>
+<title>Mountain AR Game</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
@@ -34,7 +34,6 @@ html, body { margin:0; padding:0; height:100%; }
   border: 2px solid lime;
   background: rgba(0,255,0,0.08);
   z-index: 1000;
-  overflow: hidden;
 }
 
 .radar-dot {
@@ -45,7 +44,6 @@ html, body { margin:0; padding:0; height:100%; }
   transform: translate(-50%, -50%);
 }
 
-/* Direction arrow */
 #arrow {
   position: fixed;
   bottom: 190px;
@@ -57,17 +55,14 @@ html, body { margin:0; padding:0; height:100%; }
   border-bottom: 36px solid cyan;
   transform-origin: 50% 70%;
   z-index: 1000;
-  transition: border-bottom-color 0.3s ease;
 }
 
-/* Snowboard mode */
 .snowboard #arrow {
   border-left: 28px solid transparent;
   border-right: 28px solid transparent;
   border-bottom: 56px solid cyan;
 }
 
-/* Pulse */
 @keyframes pulse {
   0% { transform: scale(1) rotate(var(--angle)); opacity: 0.7; }
   50% { transform: scale(1.35) rotate(var(--angle)); opacity: 1; }
@@ -87,7 +82,6 @@ html, body { margin:0; padding:0; height:100%; }
   z-index: 1000;
 }
 
-/* Snowboard toggle */
 #toggle {
   position: fixed;
   top: 10px;
@@ -108,6 +102,7 @@ html, body { margin:0; padding:0; height:100%; }
   <div id="level"></div>
   <div id="points"></div>
   <div id="streak"></div>
+  <div id="challenge"></div>
 </div>
 
 <div id="toggle">🏂 Mode</div>
@@ -120,19 +115,16 @@ html, body { margin:0; padding:0; height:100%; }
 
 <script>
 /* =====================
-   STATE
+   CORE STATE
 ===================== */
 let points = parseInt(localStorage.getItem("points")) || 0;
 let level = parseInt(localStorage.getItem("level")) || 1;
 let snowboardMode = false;
 
-/* Daily streak */
 const today = new Date().toDateString();
-const lastDay = localStorage.getItem("lastPlayDay");
 let streak = parseInt(localStorage.getItem("streak")) || 0;
-
-if (lastDay !== today) {
-  streak += 1;
+if (localStorage.getItem("lastPlayDay") !== today) {
+  streak++;
   localStorage.setItem("streak", streak);
   localStorage.setItem("lastPlayDay", today);
 }
@@ -145,6 +137,55 @@ const RARITIES = {
 
 const collectibles = [];
 let playerLat=null, playerLng=null;
+
+/* =====================
+   BIOMES
+===================== */
+function getBiome(lat){
+  if(lat > 45.5) return "alpine";
+  if(lat > 45.0) return "forest";
+  return "snowfield";
+}
+
+/* =====================
+   DAILY CHALLENGE
+===================== */
+const challengeKey = "dailyChallenge";
+let challenge = JSON.parse(localStorage.getItem(challengeKey));
+
+if(!challenge || challenge.date !== today){
+  const biome = ["forest","alpine","snowfield"][Math.floor(Math.random()*3)];
+  challenge = {
+    date: today,
+    biome,
+    progress: 0,
+    goal: biome==="forest"?3:biome==="alpine"?1:5,
+    completed: false
+  };
+  localStorage.setItem(challengeKey, JSON.stringify(challenge));
+}
+
+function updateChallengeUI(){
+  document.getElementById("challenge").textContent =
+    challenge.completed
+    ? "✅ Daily Challenge Complete"
+    : `🎯 ${challenge.biome} ${challenge.progress}/${challenge.goal}`;
+}
+
+/* =====================
+   LIFT ZONES
+===================== */
+const lifts = [
+  { name:"Summit Lift", start:[45.51,-122.02], end:[45.53,-122.03], radius:80 }
+];
+
+function inLiftZone(){
+  if(!playerLat) return false;
+  return lifts.some(l=>{
+    return distance(playerLat,playerLng,l.start[0],l.start[1]) < l.radius ||
+           distance(playerLat,playerLng,l.end[0],l.end[1]) < l.radius;
+  });
+}
 
 /* =====================
    MAP
@@ -163,6 +204,7 @@ function updateUI(){
   document.getElementById("level").textContent=`Level ${level}`;
   document.getElementById("points").textContent=`Points ${points}`;
   document.getElementById("streak").textContent=`🔥 ${streak} Day Streak`;
+  updateChallengeUI();
 }
 updateUI();
 
@@ -189,93 +231,14 @@ function bearing(lat1,lon1,lat2,lon2){
 }
 
 /* =====================
-   RADAR
-===================== */
-function updateRadar(){
-  const radar=document.getElementById("radar");
-  radar.innerHTML="";
-  if(!playerLat) return;
-  const maxRange=120,size=140,center=size/2;
-
-  collectibles.forEach(c=>{
-    if(c.collected) return;
-    const d=distance(playerLat,playerLng,c.lat,c.lng);
-    if(d>maxRange) return;
-    const angle=bearing(playerLat,playerLng,c.lat,c.lng)*Math.PI/180;
-    const r=(d/maxRange)*(center-8);
-    const dot=document.createElement("div");
-    dot.className="radar-dot";
-    dot.style.left=(center+r*Math.sin(angle))+"px";
-    dot.style.top=(center-r*Math.cos(angle))+"px";
-    dot.style.background=RARITIES[c.rarity].color;
-    radar.appendChild(dot);
-  });
-}
-
-/* =====================
-   DIRECTION + HOT/COLD
-===================== */
-function updateArrow(){
-  if(!playerLat) return;
-  let nearest=null, nearestDist=Infinity;
-
-  collectibles.forEach(c=>{
-    if(c.collected) return;
-    const d=distance(playerLat,playerLng,c.lat,c.lng)/RARITIES[c.rarity].signal;
-    if(d<nearestDist){ nearest=c; nearestDist=d; }
-  });
-
-  const arrow=document.getElementById("arrow");
-  if(!nearest){
-    arrow.style.display="none";
-    pulseSound.pause();
-    return;
-  }
-
-  arrow.style.display="block";
-  const angle=bearing(playerLat,playerLng,nearest.lat,nearest.lng);
-  arrow.style.setProperty("--angle",`${angle}deg`);
-  arrow.style.transform=`rotate(${angle}deg)`;
-
-  const maxDist=140;
-  const heat=1-(Math.min(nearestDist,maxDist)/maxDist);
-  const speed=(1.8-heat*1.4).toFixed(2);
-
-  arrow.style.animation=`pulse ${speed}s infinite`;
-
-  if(heat>0.66) arrow.style.borderBottomColor="red";
-  else if(heat>0.33) arrow.style.borderBottomColor="orange";
-  else arrow.style.borderBottomColor="cyan";
-
-  if(pulseSound.paused){
-    pulseSound.volume=0.4;
-    pulseSound.play();
-  }
-}
-
-/* =====================
-   COLLECTIBLES
-===================== */
-map.on("click",e=>{
-  let roll=Math.random(), rarity="common";
-  if(roll>0.9) rarity="epic";
-  else if(roll>0.7) rarity="rare";
-
-  const c={lat:e.latlng.lat,lng:e.latlng.lng,rarity,collected:false};
-  c.marker=L.circleMarker([c.lat,c.lng],{
-    radius:9,color:RARITIES[rarity].color,fillOpacity:0.9
-  }).addTo(map);
-  collectibles.push(c);
-});
-
-/* =====================
    GPS
 ===================== */
 navigator.geolocation.watchPosition(
   pos=>{
     playerLat=pos.coords.latitude;
     playerLng=pos.coords.longitude;
-    document.getElementById("status").textContent=`📍 Accuracy ${Math.round(pos.coords.accuracy)}m`;
+    document.getElementById("status").textContent=
+      inLiftZone()?"🚠 Lift Zone Active":"📍 Exploring";
 
     if(!playerMarker){
       playerMarker=L.circleMarker([playerLat,playerLng],{
@@ -294,17 +257,42 @@ navigator.geolocation.watchPosition(
         c.collected=true;
         map.removeLayer(c.marker);
         points+=RARITIES[c.rarity].points;
+
+        if(!challenge.completed && getBiome(playerLat)===challenge.biome){
+          challenge.progress++;
+          if(challenge.progress>=challenge.goal){
+            challenge.completed=true;
+            points+=500;
+          }
+          localStorage.setItem(challengeKey,JSON.stringify(challenge));
+        }
+
         playDing();
         updateUI();
       }
     });
-
-    updateRadar();
-    updateArrow();
   },
   err=>console.error(err),
   { enableHighAccuracy:true, maximumAge:0, timeout:5000 }
 );
+
+/* =====================
+   SPAWNS
+===================== */
+map.on("click",e=>{
+  let roll=Math.random();
+  if(inLiftZone()) roll+=0.15;
+
+  let rarity="common";
+  if(roll>0.92) rarity="epic";
+  else if(roll>0.75) rarity="rare";
+
+  const c={lat:e.latlng.lat,lng:e.latlng.lng,rarity,collected:false};
+  c.marker=L.circleMarker([c.lat,c.lng],{
+    radius:9,color:RARITIES[rarity].color,fillOpacity:0.9
+  }).addTo(map);
+  collectibles.push(c);
+});
 
 /* =====================
    SNOWBOARD MODE
