@@ -45,14 +45,7 @@ html, body { margin:0; padding:0; height:100%; background:black; }
   border-left: 18px solid transparent;
   border-right: 18px solid transparent;
   border-bottom: 36px solid cyan;
-  transform-origin: 50% 70%;
   z-index: 1000;
-}
-
-@keyframes pulse {
-  0% { transform: scale(1); opacity: 0.4; }
-  50% { transform: scale(1.5); opacity: 1; }
-  100% { transform: scale(1); opacity: 0.4; }
 }
 
 #status {
@@ -92,12 +85,13 @@ html, body { margin:0; padding:0; height:100%; background:black; }
    PERSISTENT STATE
 ===================== */
 let points = parseInt(localStorage.getItem("points")) || 0;
-let streak = parseInt(localStorage.getItem("streak")) || 1;
-let lastDay = localStorage.getItem("lastPlayDay");
+
 const today = new Date().toDateString();
+let lastDay = localStorage.getItem("lastPlayDay");
+let streak = parseInt(localStorage.getItem("streak")) || 0;
 
 if (lastDay !== today) {
-  streak++;
+  streak += 1;
   localStorage.setItem("streak", streak);
   localStorage.setItem("lastPlayDay", today);
 }
@@ -105,12 +99,19 @@ if (lastDay !== today) {
 let level = Math.floor(points / 500) + 1;
 
 /* =====================
+   RARITIES
+===================== */
+const RARITIES = {
+  common: { color: "cyan", points: 100, chance: 0.7 },
+  rare: { color: "orange", points: 250, chance: 0.2 },
+  epic: { color: "red", points: 500, chance: 0.1 }
+};
+
+/* =====================
    MAP
 ===================== */
 const map = L.map("map");
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19
-}).addTo(map);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
 
 let centered = false;
 let playerMarker = null;
@@ -119,15 +120,18 @@ let playerMarker = null;
    GAME OBJECTS
 ===================== */
 const collectibles = [];
-const runs = JSON.parse(localStorage.getItem("leaderboards") || "{}");
 
 /* =====================
-   RUN TRACKING
+   RUN + GHOST
 ===================== */
 let runActive = false;
 let runDistance = 0;
 let runCollects = 0;
 let lastPos = null;
+
+let bestRun = JSON.parse(localStorage.getItem("bestRun")) || null;
+let ghostMarker = null;
+let ghostProgress = 0;
 
 /* =====================
    HELPERS
@@ -174,21 +178,39 @@ pos => {
     centered = true;
   }
 
-  // RUN START
+  /* RUN START */
   if (!runActive) {
     runActive = true;
     runDistance = 0;
     runCollects = 0;
     lastPos = [lat, lng];
+    ghostProgress = 0;
+
+    if (bestRun) {
+      ghostMarker = L.circleMarker([lat, lng], {
+        radius: 6,
+        color: "white",
+        opacity: 0.5
+      }).addTo(map);
+    }
   }
 
-  // RUN UPDATE
+  /* RUN UPDATE */
   if (lastPos) {
-    runDistance += distance(lastPos[0], lastPos[1], lat, lng);
+    const d = distance(lastPos[0], lastPos[1], lat, lng);
+    runDistance += d;
     lastPos = [lat, lng];
+
+    if (ghostMarker && bestRun) {
+      ghostProgress += d;
+      const ratio = Math.min(1, ghostProgress / bestRun.distance);
+      const gLat = lat + (bestRun.end[0] - lat) * ratio;
+      const gLng = lng + (bestRun.end[1] - lng) * ratio;
+      ghostMarker.setLatLng([gLat, gLng]);
+    }
   }
 
-  // HOT / COLD RESOLUTION
+  /* COLLECTIBLES + HOT/COLD */
   let nearest = Infinity;
   collectibles.forEach(c => {
     if (c.collected) return;
@@ -198,14 +220,13 @@ pos => {
     if (d < 25) {
       c.collected = true;
       map.removeLayer(c.marker);
-      points += 100;
+      points += RARITIES[c.rarity].points;
       runCollects++;
       document.getElementById("ding").play();
       updateUI();
     }
   });
 
-  // HOT / COLD FEEDBACK
   const pulse = document.getElementById("pulse");
   if (nearest < 200) {
     const intensity = Math.max(0.4, 2 - nearest / 100);
@@ -227,16 +248,22 @@ err => console.error(err),
    SPAWNING
 ===================== */
 map.on("click", e => {
+  let roll = Math.random();
+  let rarity = roll < 0.7 ? "common" : roll < 0.9 ? "rare" : "epic";
+
   const c = {
     lat: e.latlng.lat,
     lng: e.latlng.lng,
+    rarity,
     collected: false
   };
+
   c.marker = L.circleMarker([c.lat, c.lng], {
     radius: 9,
-    color: "cyan",
+    color: RARITIES[rarity].color,
     fillOpacity: 0.9
   }).addTo(map);
+
   collectibles.push(c);
 });
 </script>
