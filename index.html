@@ -45,6 +45,20 @@ html, body { margin:0; padding:0; height:100%; }
   transform: translate(-50%, -50%);
 }
 
+/* Direction arrow */
+#arrow {
+  position: fixed;
+  bottom: 190px;
+  right: 65px;
+  width: 0;
+  height: 0;
+  border-left: 15px solid transparent;
+  border-right: 15px solid transparent;
+  border-bottom: 30px solid orange;
+  transform-origin: 50% 70%;
+  z-index: 1000;
+}
+
 #status {
   position: fixed;
   bottom: 10px;
@@ -69,6 +83,7 @@ html, body { margin:0; padding:0; height:100%; }
   <div id="streak"></div>
 </div>
 
+<div id="arrow"></div>
 <div id="radar"></div>
 <div id="status">📡 Waiting for GPS…</div>
 
@@ -84,7 +99,6 @@ let level = parseInt(localStorage.getItem("level")) || 1;
 /* Daily streak */
 const today = new Date().toDateString();
 const lastDay = localStorage.getItem("lastPlayDay");
-
 let streak = parseInt(localStorage.getItem("streak")) || 0;
 
 if (lastDay !== today) {
@@ -118,11 +132,7 @@ let centered = false;
    BIOME ZONES
 ===================== */
 const biomes = [
-  {
-    name: "Park",
-    rarityBoost: { rare: 0.15, epic: 0.05 },
-    circle: null
-  }
+  { name: "Park", circle: null }
 ];
 
 /* =====================
@@ -190,18 +200,38 @@ function updateRadar(){
 }
 
 /* =====================
+   DIRECTION ARROW
+===================== */
+function updateArrow(){
+  if(playerLat===null) return;
+
+  let nearest=null;
+  let nearestDist=Infinity;
+
+  collectibles.forEach(c=>{
+    if(c.collected) return;
+    const d=distance(playerLat,playerLng,c.lat,c.lng);
+    if(d<nearestDist){
+      nearest=c;
+      nearestDist=d;
+    }
+  });
+
+  if(!nearest) return;
+
+  const angle=bearing(playerLat,playerLng,nearest.lat,nearest.lng);
+  document.getElementById("arrow").style.transform =
+    `rotate(${angle}deg)`;
+}
+
+/* =====================
    ADD COLLECTIBLES
 ===================== */
 map.on("click",e=>{
   let rarity="common";
-  let roll=Math.random();
-
-  biomes.forEach(b=>{
-    if(b.circle && b.circle.getBounds().contains(e.latlng)){
-      if(roll > 0.8) rarity="rare";
-      if(roll > 0.95) rarity="epic";
-    }
-  });
+  const roll=Math.random();
+  if(roll>0.9) rarity="epic";
+  else if(roll>0.7) rarity="rare";
 
   const c={
     lat:e.latlng.lat,
@@ -220,53 +250,60 @@ map.on("click",e=>{
 });
 
 /* =====================
-   GPS (higher responsiveness)
+   GPS (FIXED)
 ===================== */
-navigator.geolocation.watchPosition(pos=>{
-  playerLat=pos.coords.latitude;
-  playerLng=pos.coords.longitude;
+navigator.geolocation.watchPosition(
+  pos=>{
+    playerLat=pos.coords.latitude;
+    playerLng=pos.coords.longitude;
 
-  document.getElementById("status").textContent =
-    `📍 Accuracy ${Math.round(pos.coords.accuracy)}m`;
+    document.getElementById("status").textContent =
+      `📍 Accuracy ${Math.round(pos.coords.accuracy)}m`;
 
-  if(!playerMarker){
-    playerMarker=L.circleMarker([playerLat,playerLng],{
-      radius:6,color:"lime",fillOpacity:1
-    }).addTo(map);
-  } else {
-    playerMarker.setLatLng([playerLat,playerLng]);
-  }
-
-  if(!centered){
-    map.setView([playerLat,playerLng],18);
-    centered=true;
-
-    /* Create a sample biome */
-    const park=L.circle([playerLat,playerLng],{
-      radius:80,
-      color:"green",
-      fillOpacity:0.1
-    }).addTo(map);
-    biomes[0].circle=park;
-  }
-
-  collectibles.forEach(c=>{
-    if(c.collected) return;
-    if(distance(playerLat,playerLng,c.lat,c.lng)<30){
-      c.collected=true;
-      map.removeLayer(c.marker);
-      points+=RARITIES[c.rarity].points;
-      playDing();
-      updateUI();
+    if(!playerMarker){
+      playerMarker=L.circleMarker([playerLat,playerLng],{
+        radius:6,color:"lime",fillOpacity:1
+      }).addTo(map);
+    } else {
+      playerMarker.setLatLng([playerLat,playerLng]);
     }
-  });
 
-  updateRadar();
-},{
-  enableHighAccuracy:true,
-  maximumAge:0,
-  timeout:5000
-});
+    if(!centered){
+      map.setView([playerLat,playerLng],18);
+      centered=true;
+
+      const park=L.circle([playerLat,playerLng],{
+        radius:80,
+        color:"green",
+        fillOpacity:0.1
+      }).addTo(map);
+      biomes[0].circle=park;
+    }
+
+    collectibles.forEach(c=>{
+      if(c.collected) return;
+      if(distance(playerLat,playerLng,c.lat,c.lng)<30){
+        c.collected=true;
+        map.removeLayer(c.marker);
+        points+=RARITIES[c.rarity].points;
+        playDing();
+        updateUI();
+      }
+    });
+
+    updateRadar();
+    updateArrow();
+  },
+  err=>{
+    document.getElementById("status").textContent="❌ GPS error";
+    console.error(err);
+  },
+  {
+    enableHighAccuracy:true,
+    maximumAge:0,
+    timeout:5000
+  }
+);
 </script>
 </body>
 </html>
