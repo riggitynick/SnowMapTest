@@ -9,12 +9,8 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-}
-#map { height: 100%; }
+html, body { margin:0; padding:0; height:100%; }
+#map { height:100%; }
 
 #hud {
   position: fixed;
@@ -28,9 +24,21 @@ html, body {
   font-size: 14px;
   z-index: 1000;
 }
+
 #streak { color: orange; font-weight: bold; }
-#challenge { margin-top: 8px; font-size: 13px; }
-#challenge.done { color: lime; }
+#challenge { margin-top: 6px; font-size: 13px; }
+#status {
+  position: fixed;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  z-index: 1000;
+}
 </style>
 </head>
 
@@ -43,6 +51,8 @@ html, body {
   <div id="streak"></div>
   <div id="challenge"></div>
 </div>
+
+<div id="status">📡 Waiting for GPS…</div>
 
 <audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 
@@ -72,7 +82,7 @@ if(!lastDay){
   streak++;
   localStorage.setItem("streak", streak);
   localStorage.setItem("lastDay", today);
-  collectedIds = [];
+  collectedIds=[];
   localStorage.removeItem("collectedIds");
   localStorage.removeItem("dailyChallenge");
   localStorage.removeItem("dailyProgress");
@@ -82,7 +92,7 @@ if(!lastDay){
 /***********************
  * RARITIES
  ***********************/
-const RARITIES = {
+const RARITIES={
   common:{color:"yellow",points:100},
   rare:{color:"deepskyblue",points:250},
   epic:{color:"violet",points:500}
@@ -91,64 +101,70 @@ const RARITIES = {
 /***********************
  * DAILY CHALLENGE
  ***********************/
-const challengeTypes = [
-  { id:"collect_common", text:"Collect 3 Common items", target:3 },
-  { id:"collect_rare", text:"Collect 1 Rare item", target:1 },
-  { id:"earn_points", text:"Earn 500 points", target:500 }
+const challengeTypes=[
+  {id:"collect_common",text:"Collect 3 Common items",target:3},
+  {id:"collect_rare",text:"Collect 1 Rare item",target:1},
+  {id:"earn_points",text:"Earn 500 points",target:500}
 ];
 
-let dailyChallenge = JSON.parse(localStorage.getItem("dailyChallenge"));
-let dailyProgress = getInt("dailyProgress",0);
-let dailyDone = localStorage.getItem("dailyDone")==="true";
+let dailyChallenge=JSON.parse(localStorage.getItem("dailyChallenge"));
+let dailyProgress=getInt("dailyProgress",0);
+let dailyDone=localStorage.getItem("dailyDone")==="true";
 
 if(!dailyChallenge){
-  dailyChallenge = challengeTypes[Math.floor(Math.random()*challengeTypes.length)];
-  localStorage.setItem("dailyChallenge", JSON.stringify(dailyChallenge));
-  localStorage.setItem("dailyProgress", 0);
-  localStorage.setItem("dailyDone", "false");
+  dailyChallenge=challengeTypes[Math.floor(Math.random()*challengeTypes.length)];
+  localStorage.setItem("dailyChallenge",JSON.stringify(dailyChallenge));
+  localStorage.setItem("dailyProgress",0);
+  localStorage.setItem("dailyDone","false");
 }
 
 /***********************
- * MAP
+ * MAP (DO NOT CENTER YET)
  ***********************/
-const map = L.map("map").setView([0,0],18);
+const map=L.map("map");
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
+
 let playerMarker=null;
+let hasCentered=false;
 
 /***********************
  * UI
  ***********************/
 function updateUI(){
-  level = Math.floor(points/500)+1;
+  level=Math.floor(points/500)+1;
   localStorage.setItem("points",points);
   localStorage.setItem("level",level);
+
   document.getElementById("level").textContent=`Level ${level}`;
   document.getElementById("points").textContent=`Points ${points}`;
   document.getElementById("streak").textContent=`🔥 ${streak} Day Streak`;
 
-  const c = document.getElementById("challenge");
+  const c=document.getElementById("challenge");
   if(dailyDone){
     c.textContent=`✅ ${dailyChallenge.text}`;
-    c.className="done";
   }else{
     c.textContent=`🎯 ${dailyChallenge.text} (${dailyProgress}/${dailyChallenge.target})`;
-    c.className="";
   }
 }
 updateUI();
 
 /***********************
+ * AUDIO
+ ***********************/
+const playDing=()=>document.getElementById("ding").play();
+
+/***********************
  * CHALLENGE CHECK
  ***********************/
-function checkChallenge(type, amount=1){
+function checkChallenge(type,amount=1){
   if(dailyDone) return;
   if(dailyChallenge.id===type){
-    dailyProgress += amount;
-    localStorage.setItem("dailyProgress", dailyProgress);
+    dailyProgress+=amount;
+    localStorage.setItem("dailyProgress",dailyProgress);
     if(dailyProgress>=dailyChallenge.target){
       dailyDone=true;
       localStorage.setItem("dailyDone","true");
-      points += 300;
+      points+=300;
       playDing();
     }
     updateUI();
@@ -156,64 +172,55 @@ function checkChallenge(type, amount=1){
 }
 
 /***********************
- * AUDIO
- ***********************/
-function playDing(){
-  document.getElementById("ding").play();
-}
-
-/***********************
  * COLLECTIBLES
  ***********************/
 const collectibles=[];
-
 map.on("click",e=>{
   let r="common";
   const roll=Math.random();
   if(roll>0.9) r="epic";
   else if(roll>0.7) r="rare";
 
-  const c={
-    id:Date.now(),
-    lat:e.latlng.lat,
-    lng:e.latlng.lng,
-    rarity:r,
-    collected:false,
-    marker:null
-  };
-
+  const c={lat:e.latlng.lat,lng:e.latlng.lng,rarity:r,collected:false};
   c.marker=L.circleMarker([c.lat,c.lng],{
     radius:9,
     color:RARITIES[r].color,
     fillColor:RARITIES[r].color,
     fillOpacity:0.9
   }).addTo(map);
-
   collectibles.push(c);
 });
 
 /***********************
- * GPS + PICKUP
+ * GPS
  ***********************/
 function dist(a,b,c,d){
-  const R=6371000;
-  const toRad=x=>x*Math.PI/180;
-  const dLat=toRad(c-a);
-  const dLng=toRad(d-b);
+  const R=6371000,toRad=x=>x*Math.PI/180;
+  const dLat=toRad(c-a),dLng=toRad(d-b);
   const x=Math.sin(dLat/2)**2+
     Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLng/2)**2;
   return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 }
 
-navigator.geolocation.watchPosition(pos=>{
+navigator.geolocation.watchPosition(
+pos=>{
   const lat=pos.coords.latitude;
   const lng=pos.coords.longitude;
 
+  document.getElementById("status").textContent=
+    `📍 Accuracy ${Math.round(pos.coords.accuracy)}m`;
+
   if(!playerMarker){
-    playerMarker=L.circleMarker([lat,lng],{radius:6,color:"lime",fillOpacity:1}).addTo(map);
-    map.setView([lat,lng],18);
+    playerMarker=L.circleMarker([lat,lng],{
+      radius:6,color:"lime",fillOpacity:1
+    }).addTo(map);
   }else{
     playerMarker.setLatLng([lat,lng]);
+  }
+
+  if(!hasCentered){
+    map.setView([lat,lng],18);
+    hasCentered=true;
   }
 
   collectibles.forEach(c=>{
@@ -226,12 +233,18 @@ navigator.geolocation.watchPosition(pos=>{
 
       if(c.rarity==="common") checkChallenge("collect_common");
       if(c.rarity==="rare") checkChallenge("collect_rare");
-      checkChallenge("earn_points", RARITIES[c.rarity].points);
+      checkChallenge("earn_points",RARITIES[c.rarity].points);
 
       updateUI();
     }
   });
-},{enableHighAccuracy:true});
+},
+err=>{
+  document.getElementById("status").textContent="❌ GPS unavailable";
+  console.error(err);
+},
+{enableHighAccuracy:true}
+);
 </script>
 </body>
 </html>
