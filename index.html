@@ -9,14 +9,14 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <style>
-html, body { margin:0; padding:0; height:100%; }
+html, body { margin:0; padding:0; height:100%; background:black; }
 #map { height:100%; }
 
 #hud {
   position: fixed;
   top: 10px;
   left: 10px;
-  background: rgba(0,0,0,0.7);
+  background: rgba(0,0,0,0.75);
   color: white;
   padding: 12px;
   border-radius: 14px;
@@ -31,23 +31,15 @@ html, body { margin:0; padding:0; height:100%; }
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  border: 2px solid lime;
-  background: rgba(0,255,0,0.08);
+  border: 2px solid cyan;
+  background: rgba(0,255,255,0.05);
   z-index: 1000;
-}
-
-.radar-dot {
-  position: absolute;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
 }
 
 #arrow {
   position: fixed;
   bottom: 190px;
-  right: 65px;
+  right: 70px;
   width: 0;
   height: 0;
   border-left: 18px solid transparent;
@@ -58,9 +50,9 @@ html, body { margin:0; padding:0; height:100%; }
 }
 
 @keyframes pulse {
-  0% { transform: scale(1) rotate(var(--angle)); opacity: 0.6; }
-  50% { transform: scale(1.4) rotate(var(--angle)); opacity: 1; }
-  100% { transform: scale(1) rotate(var(--angle)); opacity: 0.6; }
+  0% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.5); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.4; }
 }
 
 #status {
@@ -68,7 +60,7 @@ html, body { margin:0; padding:0; height:100%; }
   bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(0,0,0,0.7);
+  background: rgba(0,0,0,0.75);
   color: white;
   padding: 6px 12px;
   border-radius: 10px;
@@ -85,7 +77,6 @@ html, body { margin:0; padding:0; height:100%; }
   <div id="level"></div>
   <div id="points"></div>
   <div id="streak"></div>
-  <div id="challenge"></div>
   <div id="run"></div>
 </div>
 
@@ -98,21 +89,37 @@ html, body { margin:0; padding:0; height:100%; }
 
 <script>
 /* =====================
-   CORE STATE
+   PERSISTENT STATE
 ===================== */
 let points = parseInt(localStorage.getItem("points")) || 0;
-let level = Math.floor(points / 500) + 1;
 let streak = parseInt(localStorage.getItem("streak")) || 1;
-
+let lastDay = localStorage.getItem("lastPlayDay");
 const today = new Date().toDateString();
-if (localStorage.getItem("lastPlayDay") !== today) {
+
+if (lastDay !== today) {
   streak++;
   localStorage.setItem("streak", streak);
   localStorage.setItem("lastPlayDay", today);
 }
 
+let level = Math.floor(points / 500) + 1;
+
+/* =====================
+   MAP
+===================== */
+const map = L.map("map");
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19
+}).addTo(map);
+
+let centered = false;
+let playerMarker = null;
+
+/* =====================
+   GAME OBJECTS
+===================== */
 const collectibles = [];
-let playerLat=null, playerLng=null;
+const runs = JSON.parse(localStorage.getItem("leaderboards") || "{}");
 
 /* =====================
    RUN TRACKING
@@ -120,130 +127,116 @@ let playerLat=null, playerLng=null;
 let runActive = false;
 let runDistance = 0;
 let runCollects = 0;
-let lastRunLatLng = null;
+let lastPos = null;
 
 /* =====================
-   BIOMES & CHALLENGE
+   HELPERS
 ===================== */
-const challengeKey="dailyChallenge";
-let challenge=JSON.parse(localStorage.getItem(challengeKey))||{
-  date:today, biome:"forest", progress:0, goal:3, completed:false
-};
-
-/* =====================
-   LIFTS
-===================== */
-const lifts=[{start:[45.51,-122.02],end:[45.53,-122.03],radius:80}];
-
-function inLiftZone(){
-  if(!playerLat) return false;
-  return lifts.some(l=>{
-    return distance(playerLat,playerLng,l.start[0],l.start[1])<l.radius;
-  });
+function distance(a,b,c,d){
+  const R=6371000,toRad=x=>x*Math.PI/180;
+  const dLat=toRad(c-a),dLng=toRad(d-b);
+  const x=Math.sin(dLat/2)**2 +
+    Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
 }
 
-/* =====================
-   MAP
-===================== */
-const map=L.map("map");
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19}).addTo(map);
-let playerMarker=null, centered=false;
-
-/* =====================
-   UI
-===================== */
 function updateUI(){
-  level=Math.floor(points/500)+1;
-  localStorage.setItem("points",points);
-  document.getElementById("level").textContent=`Level ${level}`;
-  document.getElementById("points").textContent=`Points ${points}`;
-  document.getElementById("streak").textContent=`🔥 ${streak} Day Streak`;
-  document.getElementById("run").textContent=
+  level = Math.floor(points / 500) + 1;
+  localStorage.setItem("points", points);
+  document.getElementById("level").textContent = `Level ${level}`;
+  document.getElementById("points").textContent = `Points ${points}`;
+  document.getElementById("streak").textContent = `🔥 ${streak} Day Streak`;
+  document.getElementById("run").textContent =
     runActive ? `🏂 Run: ${Math.round(runDistance)}m | 🎯 ${runCollects}` : "";
 }
 updateUI();
 
 /* =====================
-   HELPERS
-===================== */
-const pulseSound=document.getElementById("pulse");
-function distance(a,b,c,d){
-  const R=6371000,toRad=x=>x*Math.PI/180;
-  const dLat=toRad(c-a),dLng=toRad(d-b);
-  const x=Math.sin(dLat/2)**2+
-    Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
-}
-
-/* =====================
-   GPS + GAME LOOP
+   GPS LOOP
 ===================== */
 navigator.geolocation.watchPosition(
-pos=>{
-  playerLat=pos.coords.latitude;
-  playerLng=pos.coords.longitude;
-  document.getElementById("status").textContent=inLiftZone()?"🚠 Lift Zone":"🏂 Riding";
+pos => {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
 
-  if(!playerMarker){
-    playerMarker=L.circleMarker([playerLat,playerLng],{radius:6,color:"lime"}).addTo(map);
-  } else playerMarker.setLatLng([playerLat,playerLng]);
+  document.getElementById("status").textContent = "🏂 Riding";
 
-  if(!centered){ map.setView([playerLat,playerLng],18); centered=true; }
+  if (!playerMarker) {
+    playerMarker = L.circleMarker([lat, lng], {
+      radius: 6, color: "lime", fillOpacity: 1
+    }).addTo(map);
+  } else {
+    playerMarker.setLatLng([lat, lng]);
+  }
+
+  if (!centered) {
+    map.setView([lat, lng], 18);
+    centered = true;
+  }
 
   // RUN START
-  if(!runActive && !inLiftZone()){
-    runActive=true;
-    runDistance=0;
-    runCollects=0;
-    lastRunLatLng=[playerLat,playerLng];
+  if (!runActive) {
+    runActive = true;
+    runDistance = 0;
+    runCollects = 0;
+    lastPos = [lat, lng];
   }
 
-  // RUN TRACKING
-  if(runActive && lastRunLatLng){
-    runDistance+=distance(lastRunLatLng[0],lastRunLatLng[1],playerLat,playerLng);
-    lastRunLatLng=[playerLat,playerLng];
+  // RUN UPDATE
+  if (lastPos) {
+    runDistance += distance(lastPos[0], lastPos[1], lat, lng);
+    lastPos = [lat, lng];
   }
 
-  // RUN END
-  if(runActive && inLiftZone()){
-    const bonus=Math.round(runDistance/10)+(runCollects*100);
-    points+=bonus;
-    runActive=false;
-    updateUI();
-  }
+  // HOT / COLD RESOLUTION
+  let nearest = Infinity;
+  collectibles.forEach(c => {
+    if (c.collected) return;
+    const d = distance(lat, lng, c.lat, c.lng);
+    nearest = Math.min(nearest, d);
 
-  // HOT / COLD
-  let nearest=Infinity;
-  collectibles.forEach(c=>{
-    if(c.collected) return;
-    const d=distance(playerLat,playerLng,c.lat,c.lng);
-    nearest=Math.min(nearest,d);
-    if(d<25){
-      c.collected=true;
+    if (d < 25) {
+      c.collected = true;
       map.removeLayer(c.marker);
-      points+=100;
+      points += 100;
       runCollects++;
-      updateUI();
       document.getElementById("ding").play();
+      updateUI();
     }
   });
 
-  if(nearest<200){
-    pulseSound.playbackRate=Math.max(0.5,2-(nearest/100));
-    pulseSound.play();
-  } else pulseSound.pause();
+  // HOT / COLD FEEDBACK
+  const pulse = document.getElementById("pulse");
+  if (nearest < 200) {
+    const intensity = Math.max(0.4, 2 - nearest / 100);
+    pulse.playbackRate = intensity;
+    pulse.volume = Math.min(1, intensity / 2);
+    pulse.play();
+    document.getElementById("radar").style.borderColor =
+      nearest < 50 ? "red" : nearest < 100 ? "orange" : "cyan";
+  } else {
+    pulse.pause();
+  }
 
 },
-err=>console.error(err),
-{enableHighAccuracy:true,maximumAge:0,timeout:5000}
+err => console.error(err),
+{ enableHighAccuracy:true, maximumAge:0, timeout:5000 }
 );
 
 /* =====================
-   SPAWN
+   SPAWNING
 ===================== */
-map.on("click",e=>{
-  const c={lat:e.latlng.lat,lng:e.latlng.lng,collected:false};
-  c.marker=L.circleMarker([c.lat,c.lng],{radius:9,color:"cyan"}).addTo(map);
+map.on("click", e => {
+  const c = {
+    lat: e.latlng.lat,
+    lng: e.latlng.lng,
+    collected: false
+  };
+  c.marker = L.circleMarker([c.lat, c.lng], {
+    radius: 9,
+    color: "cyan",
+    fillOpacity: 0.9
+  }).addTo(map);
   collectibles.push(c);
 });
 </script>
