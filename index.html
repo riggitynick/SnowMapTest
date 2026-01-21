@@ -2,25 +2,30 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Mountain AR Game</title>
+<title>SnowMap Prototype</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
-html, body { margin:0; padding:0; height:100%; background:black; }
-#map { height:100%; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: system-ui, sans-serif;
+}
+
+#map { height: 100%; }
 
 #hud {
   position: fixed;
   top: 10px;
   left: 10px;
-  background: rgba(0,0,0,0.75);
+  background: rgba(0,0,0,0.6);
   color: white;
-  padding: 12px;
-  border-radius: 14px;
-  font-family: system-ui, sans-serif;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 14px;
   z-index: 1000;
 }
 
@@ -28,244 +33,241 @@ html, body { margin:0; padding:0; height:100%; background:black; }
   position: fixed;
   bottom: 20px;
   right: 20px;
-  width: 140px;
-  height: 140px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
-  border: 2px solid cyan;
-  background: rgba(0,255,255,0.05);
+  border: 2px solid #00ffcc;
+  background: rgba(0,255,204,0.1);
+  animation: pulse 2s infinite;
   z-index: 1000;
 }
 
-#arrow {
-  position: fixed;
-  bottom: 190px;
-  right: 70px;
-  width: 0;
-  height: 0;
-  border-left: 18px solid transparent;
-  border-right: 18px solid transparent;
-  border-bottom: 36px solid cyan;
-  z-index: 1000;
+@keyframes pulse {
+  0% { box-shadow: 0 0 5px rgba(0,255,204,0.3); }
+  100% { box-shadow: 0 0 20px rgba(0,255,204,0.8); }
 }
 
-#status {
+#runSummary {
   position: fixed;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(0,0,0,0.75);
+  inset: 0;
+  background: rgba(0,0,0,0.85);
   color: white;
-  padding: 6px 12px;
-  border-radius: 10px;
-  font-size: 12px;
-  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+#runCard {
+  background: #111;
+  padding: 20px;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 400px;
+  text-align: center;
+}
+
+#runCard input {
+  width: 100%;
+  padding: 8px;
+  margin-top: 10px;
+  font-size: 16px;
+}
+
+#runCard button {
+  margin-top: 10px;
+  padding: 10px;
+  width: 100%;
+  font-size: 16px;
+  cursor: pointer;
 }
 </style>
 </head>
 
 <body>
+
 <div id="map"></div>
 
 <div id="hud">
-  <div id="level"></div>
-  <div id="points"></div>
-  <div id="streak"></div>
-  <div id="run"></div>
+  Points: <span id="points">0</span><br>
+  Streak: <span id="streak">0</span> day(s)<br>
+  Status: <span id="status">Waiting for GPS</span>
 </div>
 
-<div id="arrow"></div>
 <div id="radar"></div>
-<div id="status">📡 Waiting for GPS…</div>
+
+<div id="runSummary">
+  <div id="runCard">
+    <h2>🏁 Run Complete</h2>
+    <p id="runStats"></p>
+    <input id="runNameInput" placeholder="Name this run">
+    <button onclick="saveRun()">Save Run</button>
+  </div>
+</div>
 
 <audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
-<audio id="pulse" src="https://actions.google.com/sounds/v1/alarms/heartbeat.ogg" loop></audio>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-/* =====================
-   PERSISTENT STATE
-===================== */
-let points = parseInt(localStorage.getItem("points")) || 0;
+// =======================
+// STATE
+// =======================
+let map, userMarker;
+let lastPosition = null;
+let points = Number(localStorage.getItem("points")) || 0;
 
-const today = new Date().toDateString();
-let lastDay = localStorage.getItem("lastPlayDay");
-let streak = parseInt(localStorage.getItem("streak")) || 0;
+let collectibles = [];
+let collectedIds = JSON.parse(localStorage.getItem("collected")) || [];
 
-if (lastDay !== today) {
-  streak += 1;
-  localStorage.setItem("streak", streak);
-  localStorage.setItem("lastPlayDay", today);
+let streakData = JSON.parse(localStorage.getItem("streak")) || { last: null, count: 0 };
+
+let run = null;
+let savedRuns = JSON.parse(localStorage.getItem("runs")) || [];
+
+// =======================
+// INIT MAP
+// =======================
+map = L.map('map').setView([0,0], 18);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+userMarker = L.circleMarker([0,0], {
+  radius: 8,
+  color: '#00ffff'
+}).addTo(map);
+
+// =======================
+// UI INIT
+// =======================
+document.getElementById("points").textContent = points;
+
+// =======================
+// STREAK
+// =======================
+function updateStreak() {
+  const today = new Date().toDateString();
+  if (streakData.last !== today) {
+    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    streakData.count = (streakData.last === yesterday) ? streakData.count + 1 : 1;
+    streakData.last = today;
+    localStorage.setItem("streak", JSON.stringify(streakData));
+  }
+  document.getElementById("streak").textContent = streakData.count;
+}
+updateStreak();
+
+// =======================
+// COLLECTIBLES
+// =======================
+function spawnCollectibles(center) {
+  for (let i = 0; i < 10; i++) {
+    const id = "c_" + i;
+    if (collectedIds.includes(id)) continue;
+
+    const lat = center.lat + (Math.random()-0.5)/5000;
+    const lng = center.lng + (Math.random()-0.5)/5000;
+
+    const marker = L.circleMarker([lat,lng], {
+      radius: 6,
+      color: i%3===0 ? "gold" : i%3===1 ? "cyan" : "magenta"
+    }).addTo(map);
+
+    collectibles.push({ id, lat, lng, marker, radius: 8, points: 10 });
+  }
 }
 
-let level = Math.floor(points / 500) + 1;
-
-/* =====================
-   RARITIES
-===================== */
-const RARITIES = {
-  common: { color: "cyan", points: 100, chance: 0.7 },
-  rare: { color: "orange", points: 250, chance: 0.2 },
-  epic: { color: "red", points: 500, chance: 0.1 }
-};
-
-/* =====================
-   MAP
-===================== */
-const map = L.map("map");
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
-
-let centered = false;
-let playerMarker = null;
-
-/* =====================
-   GAME OBJECTS
-===================== */
-const collectibles = [];
-
-/* =====================
-   RUN + GHOST
-===================== */
-let runActive = false;
-let runDistance = 0;
-let runCollects = 0;
-let lastPos = null;
-
-let bestRun = JSON.parse(localStorage.getItem("bestRun")) || null;
-let ghostMarker = null;
-let ghostProgress = 0;
-
-/* =====================
-   HELPERS
-===================== */
-function distance(a,b,c,d){
-  const R=6371000,toRad=x=>x*Math.PI/180;
-  const dLat=toRad(c-a),dLng=toRad(d-b);
-  const x=Math.sin(dLat/2)**2 +
-    Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLng/2)**2;
-  return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+// =======================
+// RUN SYSTEM (NEW)
+// =======================
+function startRun(pos) {
+  run = {
+    start: Date.now(),
+    path: [[pos.lat, pos.lng]],
+    distance: 0
+  };
 }
 
-function updateUI(){
-  level = Math.floor(points / 500) + 1;
-  localStorage.setItem("points", points);
-  document.getElementById("level").textContent = `Level ${level}`;
-  document.getElementById("points").textContent = `Points ${points}`;
-  document.getElementById("streak").textContent = `🔥 ${streak} Day Streak`;
-  document.getElementById("run").textContent =
-    runActive ? `🏂 Run: ${Math.round(runDistance)}m | 🎯 ${runCollects}` : "";
-}
-updateUI();
+function endRun() {
+  if (!run) return;
 
-/* =====================
-   GPS LOOP
-===================== */
-navigator.geolocation.watchPosition(
-pos => {
+  const time = Math.floor((Date.now() - run.start)/1000);
+  const name = generateRunName();
+
+  document.getElementById("runStats").innerHTML =
+    `Time: ${time}s<br>Distance: ${run.distance.toFixed(2)} m`;
+
+  document.getElementById("runNameInput").value = name;
+  document.getElementById("runSummary").style.display = "flex";
+}
+
+function saveRun() {
+  const name = document.getElementById("runNameInput").value;
+  run.name = name;
+  savedRuns.push(run);
+  localStorage.setItem("runs", JSON.stringify(savedRuns));
+  document.getElementById("runSummary").style.display = "none";
+  run = null;
+}
+
+function generateRunName() {
+  const names = ["Powder Snake","Stormline","Frostbite","Glade Rush","White Fang"];
+  return names[Math.floor(Math.random()*names.length)];
+}
+
+// =======================
+// GPS
+// =======================
+navigator.geolocation.watchPosition(pos => {
   const lat = pos.coords.latitude;
   const lng = pos.coords.longitude;
 
-  document.getElementById("status").textContent = "🏂 Riding";
+  document.getElementById("status").textContent = "GPS Active";
 
-  if (!playerMarker) {
-    playerMarker = L.circleMarker([lat, lng], {
-      radius: 6, color: "lime", fillOpacity: 1
-    }).addTo(map);
+  userMarker.setLatLng([lat,lng]);
+  map.setView([lat,lng], 18);
+
+  if (!lastPosition) {
+    spawnCollectibles({lat,lng});
+    startRun({lat,lng});
   } else {
-    playerMarker.setLatLng([lat, lng]);
-  }
+    const d = map.distance([lat,lng], lastPosition);
+    if (run) {
+      run.distance += d;
+      run.path.push([lat,lng]);
+    }
 
-  if (!centered) {
-    map.setView([lat, lng], 18);
-    centered = true;
-  }
-
-  /* RUN START */
-  if (!runActive) {
-    runActive = true;
-    runDistance = 0;
-    runCollects = 0;
-    lastPos = [lat, lng];
-    ghostProgress = 0;
-
-    if (bestRun) {
-      ghostMarker = L.circleMarker([lat, lng], {
-        radius: 6,
-        color: "white",
-        opacity: 0.5
-      }).addTo(map);
+    // STOP detection
+    if (d < 0.5 && run) {
+      setTimeout(() => run && endRun(), 10000);
     }
   }
 
-  /* RUN UPDATE */
-  if (lastPos) {
-    const d = distance(lastPos[0], lastPos[1], lat, lng);
-    runDistance += d;
-    lastPos = [lat, lng];
-
-    if (ghostMarker && bestRun) {
-      ghostProgress += d;
-      const ratio = Math.min(1, ghostProgress / bestRun.distance);
-      const gLat = lat + (bestRun.end[0] - lat) * ratio;
-      const gLng = lng + (bestRun.end[1] - lng) * ratio;
-      ghostMarker.setLatLng([gLat, gLng]);
-    }
-  }
-
-  /* COLLECTIBLES + HOT/COLD */
-  let nearest = Infinity;
+  // Collectibles
   collectibles.forEach(c => {
-    if (c.collected) return;
-    const d = distance(lat, lng, c.lat, c.lng);
-    nearest = Math.min(nearest, d);
-
-    if (d < 25) {
-      c.collected = true;
+    if (!c.marker) return;
+    const dist = map.distance([lat,lng],[c.lat,c.lng]);
+    if (dist < c.radius) {
+      points += c.points;
+      document.getElementById("points").textContent = points;
+      localStorage.setItem("points", points);
+      collectedIds.push(c.id);
+      localStorage.setItem("collected", JSON.stringify(collectedIds));
       map.removeLayer(c.marker);
-      points += RARITIES[c.rarity].points;
-      runCollects++;
+      c.marker = null;
       document.getElementById("ding").play();
-      updateUI();
     }
   });
 
-  const pulse = document.getElementById("pulse");
-  if (nearest < 200) {
-    const intensity = Math.max(0.4, 2 - nearest / 100);
-    pulse.playbackRate = intensity;
-    pulse.volume = Math.min(1, intensity / 2);
-    pulse.play();
-    document.getElementById("radar").style.borderColor =
-      nearest < 50 ? "red" : nearest < 100 ? "orange" : "cyan";
-  } else {
-    pulse.pause();
-  }
+  lastPosition = [lat,lng];
 
-},
-err => console.error(err),
-{ enableHighAccuracy:true, maximumAge:0, timeout:5000 }
-);
-
-/* =====================
-   SPAWNING
-===================== */
-map.on("click", e => {
-  let roll = Math.random();
-  let rarity = roll < 0.7 ? "common" : roll < 0.9 ? "rare" : "epic";
-
-  const c = {
-    lat: e.latlng.lat,
-    lng: e.latlng.lng,
-    rarity,
-    collected: false
-  };
-
-  c.marker = L.circleMarker([c.lat, c.lng], {
-    radius: 9,
-    color: RARITIES[rarity].color,
-    fillOpacity: 0.9
-  }).addTo(map);
-
-  collectibles.push(c);
+}, err => {
+  document.getElementById("status").textContent = "GPS Error";
+}, {
+  enableHighAccuracy: true,
+  maximumAge: 500,
+  timeout: 10000
 });
 </script>
+
 </body>
 </html>
