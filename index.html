@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SnowMap – GPS Fixed (Hardened)</title>
+<title>SnowMap – AR Direction Feedback</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -33,7 +33,33 @@ html, body { margin:0; padding:0; height:100%; font-family:system-ui; }
   padding:20px; border-radius:12px;
   width:90%; max-width:420px;
 }
+
 .runItem { border-bottom:1px solid #333; padding:8px 0; }
+
+/* ===== AR RADAR ===== */
+#radar {
+  position:fixed;
+  bottom:30px;
+  right:30px;
+  width:80px;
+  height:80px;
+  border-radius:50%;
+  border:2px solid rgba(0,255,255,0.6);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  z-index:1500;
+  pointer-events:none;
+}
+
+#arrow {
+  width:0;
+  height:0;
+  border-left:10px solid transparent;
+  border-right:10px solid transparent;
+  border-bottom:30px solid cyan;
+  transform-origin:50% 80%;
+}
 </style>
 </head>
 
@@ -46,6 +72,10 @@ html, body { margin:0; padding:0; height:100%; font-family:system-ui; }
   Level: <span id="level">1</span><br>
   Status: <span id="status">Waiting for GPS…</span><br>
   <button onclick="openRunHistory()">📘 Runs</button>
+</div>
+
+<div id="radar" style="display:none;">
+  <div id="arrow"></div>
 </div>
 
 <div id="runSummary" class="overlay">
@@ -71,119 +101,132 @@ html, body { margin:0; padding:0; height:100%; font-family:system-ui; }
 
 <script>
 // ======================
-// PERSISTENT STATE
+// STATE
 // ======================
 let points = Number(localStorage.getItem("points")) || 0;
 let level = Number(localStorage.getItem("level")) || 1;
 let runs = JSON.parse(localStorage.getItem("runs")) || [];
+let collectibles = [];
 
 document.getElementById("points").textContent = points;
 document.getElementById("level").textContent = level;
 
 // ======================
-// MAP / GPS STATE
+// MAP / GPS
 // ======================
-let map = null;
-let userMarker = null;
-let lastPos = null;
+let map=null, userMarker=null, lastPos=null;
+let run=null, stationary=0, ghostLine=null;
+let heading=0;
 
-let run = null;
-let stationary = 0;
-let ghostLine = null;
-let collectibles = [];
-
-// ======================
-// GPS ERROR HANDLER (FIX)
-// ======================
 function gpsError(err) {
-  document.getElementById("status").textContent =
-    "GPS Error: " + err.message;
+  document.getElementById("status").textContent = "GPS Error";
 }
 
-// ======================
-// GPS SUCCESS HANDLER
-// ======================
 function gpsSuccess(pos) {
   const lat = pos.coords.latitude;
   const lng = pos.coords.longitude;
-
   document.getElementById("status").textContent = "GPS Active";
 
   if (!map) {
-    map = L.map("map").setView([lat, lng], 18);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png")
-      .addTo(map);
-
-    userMarker = L.circleMarker([lat,lng], {
-      radius:8, color:"#00ffff"
-    }).addTo(map);
-
-    lastPos = [lat, lng];
+    map = L.map("map").setView([lat,lng],18);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+    userMarker = L.circleMarker([lat,lng],{radius:8,color:"#00ffff"}).addTo(map);
+    lastPos=[lat,lng];
     setupMapClick();
     drawGhost();
     return;
   }
 
-  userMarker.setLatLng([lat, lng]);
+  userMarker.setLatLng([lat,lng]);
 
-  const d = map.distance(lastPos, [lat, lng]);
-
-  if (!run && d > 8) startRun(lat, lng);
+  const d = map.distance(lastPos,[lat,lng]);
+  if (!run && d>8) startRun(lat,lng);
 
   if (run) {
-    run.distance += d;
-    run.path.push([lat, lng]);
-
-    if (d < 0.5) {
-      stationary++;
-      if (stationary >= 10) endRun();
-    } else stationary = 0;
+    run.distance+=d;
+    run.path.push([lat,lng]);
+    if (d<0.5) { stationary++; if (stationary>=10) endRun(); }
+    else stationary=0;
   }
 
-  checkCollectibles(lat, lng);
-  lastPos = [lat, lng];
+  checkCollectibles(lat,lng);
+  updateRadar(lat,lng);
+  lastPos=[lat,lng];
 }
 
-// ======================
-// START GPS (CORRECT)
-// ======================
 navigator.geolocation.watchPosition(
   gpsSuccess,
   gpsError,
-  {
-    enableHighAccuracy: true,
-    maximumAge: 0,
-    timeout: 15000
-  }
+  { enableHighAccuracy:true, maximumAge:0, timeout:15000 }
 );
+
+// ======================
+// DEVICE ORIENTATION
+// ======================
+window.addEventListener("deviceorientationabsolute", e=>{
+  if (e.alpha!==null) heading = e.alpha;
+});
+window.addEventListener("deviceorientation", e=>{
+  if (e.alpha!==null) heading = e.alpha;
+});
+
+// ======================
+// RADAR LOGIC
+// ======================
+function updateRadar(lat,lng) {
+  const target = nearestCollectible(lat,lng);
+  const radar = document.getElementById("radar");
+
+  if (!target) {
+    radar.style.display="none";
+    return;
+  }
+
+  radar.style.display="flex";
+
+  const bearing = getBearing(lat,lng,target.lat,target.lng);
+  const rotation = bearing - heading;
+  document.getElementById("arrow").style.transform =
+    `rotate(${rotation}deg)`;
+
+  const dist = map.distance([lat,lng],[target.lat,target.lng]);
+  radar.style.animation = `pulse ${Math.max(0.5, dist/100)}s infinite`;
+}
+
+function nearestCollectible(lat,lng) {
+  let best=null, bestDist=Infinity;
+  collectibles.forEach(c=>{
+    if (c.collected) return;
+    const d = map.distance([lat,lng],[c.lat,c.lng]);
+    if (d<bestDist) { best=c; bestDist=d; }
+  });
+  return best;
+}
+
+function getBearing(lat1,lon1,lat2,lon2) {
+  const toRad=x=>x*Math.PI/180;
+  const y=Math.sin(toRad(lon2-lon1))*Math.cos(toRad(lat2));
+  const x=Math.cos(toRad(lat1))*Math.sin(toRad(lat2))-
+          Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
+}
 
 // ======================
 // COLLECTIBLES
 // ======================
 function setupMapClick() {
-  map.on("click", e => {
-    const c = {
-      lat: e.latlng.lat,
-      lng: e.latlng.lng,
-      radius: 8,
-      collected: false
-    };
-
-    c.marker = L.circleMarker(e.latlng, {
-      radius:10,
-      color:"#ffcc00"
-    }).addTo(map);
-
+  map.on("click",e=>{
+    const c={lat:e.latlng.lat,lng:e.latlng.lng,radius:8,collected:false};
+    c.marker=L.circleMarker(e.latlng,{radius:10,color:"#ffcc00"}).addTo(map);
     collectibles.push(c);
   });
 }
 
 function checkCollectibles(lat,lng) {
-  collectibles.forEach(c => {
+  collectibles.forEach(c=>{
     if (c.collected) return;
-    const d = map.distance([lat,lng],[c.lat,c.lng]);
-    if (d < c.radius) {
-      c.collected = true;
+    if (map.distance([lat,lng],[c.lat,c.lng])<c.radius) {
+      c.collected=true;
       map.removeLayer(c.marker);
       addPoints(10);
       document.getElementById("ding").play();
@@ -195,15 +238,14 @@ function checkCollectibles(lat,lng) {
 // POINTS / LEVELS
 // ======================
 function addPoints(p) {
-  points += p;
-  localStorage.setItem("points", points);
-  document.getElementById("points").textContent = points;
-
-  const newLevel = Math.floor(points / 100) + 1;
-  if (newLevel !== level) {
-    level = newLevel;
-    localStorage.setItem("level", level);
-    document.getElementById("level").textContent = level;
+  points+=p;
+  localStorage.setItem("points",points);
+  document.getElementById("points").textContent=points;
+  const newLevel=Math.floor(points/100)+1;
+  if (newLevel!==level) {
+    level=newLevel;
+    localStorage.setItem("level",level);
+    document.getElementById("level").textContent=level;
   }
 }
 
@@ -211,52 +253,38 @@ function addPoints(p) {
 // RUNS
 // ======================
 function startRun(lat,lng) {
-  run = {
-    start: Date.now(),
-    distance: 0,
-    path: [[lat,lng]],
-    date: new Date().toLocaleString(),
-    name: generateRunName()
-  };
+  run={start:Date.now(),distance:0,path:[[lat,lng]],date:new Date().toLocaleString(),name:generateRunName()};
   drawGhost();
 }
 
 function endRun() {
-  if (!run) return;
-  const t = Math.floor((Date.now()-run.start)/1000);
-  document.getElementById("runStats").innerHTML =
-    `Time: ${t}s<br>Distance: ${run.distance.toFixed(1)} m`;
-  document.getElementById("runNameInput").value = run.name;
+  const t=Math.floor((Date.now()-run.start)/1000);
+  document.getElementById("runStats").innerHTML=`Time: ${t}s<br>Distance: ${run.distance.toFixed(1)} m`;
+  document.getElementById("runNameInput").value=run.name;
   document.getElementById("runSummary").style.display="flex";
 }
 
 function saveRun() {
-  run.name = document.getElementById("runNameInput").value;
+  run.name=document.getElementById("runNameInput").value;
   runs.push(run);
-  localStorage.setItem("runs", JSON.stringify(runs));
-  run = null;
-  stationary = 0;
+  localStorage.setItem("runs",JSON.stringify(runs));
+  run=null; stationary=0;
   document.getElementById("runSummary").style.display="none";
 }
 
 function generateRunName() {
-  const n=["Powderline","White Rush","Frostbite","Stormpath"];
-  return n[Math.floor(Math.random()*n.length)];
+  return ["Powderline","White Rush","Frostbite","Stormpath"]
+    [Math.floor(Math.random()*4)];
 }
 
 // ======================
 // GHOST RUN
 // ======================
 function drawGhost() {
-  if (!map || runs.length === 0) return;
-  const best = runs.reduce((a,b)=>b.distance>a.distance?b:a);
+  if (!map||runs.length===0) return;
+  const best=runs.reduce((a,b)=>b.distance>a.distance?b:a);
   if (ghostLine) map.removeLayer(ghostLine);
-  ghostLine = L.polyline(best.path,{
-    color:"#00ffff",
-    weight:4,
-    opacity:0.35,
-    dashArray:"6,6"
-  }).addTo(map);
+  ghostLine=L.polyline(best.path,{color:"#00ffff",weight:4,opacity:0.35,dashArray:"6,6"}).addTo(map);
 }
 
 // ======================
@@ -268,8 +296,7 @@ function openRunHistory() {
   runs.forEach(r=>{
     const d=document.createElement("div");
     d.className="runItem";
-    d.innerHTML=
-      `<strong>${r.name}</strong><br>${r.date}<br>${r.distance.toFixed(1)} m`;
+    d.innerHTML=`<strong>${r.name}</strong><br>${r.date}<br>${r.distance.toFixed(1)} m`;
     list.appendChild(d);
   });
   document.getElementById("runHistory").style.display="flex";
