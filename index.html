@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SnowMap – Stable Core + Run History</title>
+<title>SnowMap – GPS Fixed + Ghost Runs</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -32,8 +32,6 @@ html, body {
 #hud button {
   margin-top: 6px;
   width: 100%;
-  padding: 6px;
-  font-size: 14px;
 }
 
 #runSummary, #runHistory {
@@ -52,16 +50,9 @@ html, body {
   padding: 20px;
   border-radius: 12px;
   width: 90%;
-  max-width: 400px;
+  max-width: 420px;
   max-height: 80%;
   overflow-y: auto;
-}
-
-.panel input, .panel button {
-  width: 100%;
-  padding: 10px;
-  margin-top: 10px;
-  font-size: 16px;
 }
 
 .runItem {
@@ -78,11 +69,10 @@ html, body {
 <div id="hud">
   Points: <span id="points">0</span><br>
   Level: <span id="level">1</span><br>
-  Status: <span id="status">Waiting for GPS</span><br>
+  Status: <span id="status">Initializing GPS…</span><br>
   <button onclick="openRunHistory()">📘 Runs</button>
 </div>
 
-<!-- Run Summary -->
 <div id="runSummary">
   <div class="panel">
     <h2>🏁 Run Complete</h2>
@@ -92,7 +82,6 @@ html, body {
   </div>
 </div>
 
-<!-- Run History -->
 <div id="runHistory">
   <div class="panel">
     <h2>📘 Run History</h2>
@@ -101,36 +90,31 @@ html, body {
   </div>
 </div>
 
-<audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
-
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-// =======================
-// MAP
-// =======================
-const map = L.map('map').setView([0,0], 18);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+// ======================
+// MAP (lazy init)
+// ======================
+let map;
+let userMarker;
+let ghostLine;
 
-const userMarker = L.circleMarker([0,0], { radius: 8, color: '#00ffff' }).addTo(map);
-
-// =======================
+// ======================
 // STATE
-// =======================
+// ======================
 let points = Number(localStorage.getItem("points")) || 0;
 let level = Number(localStorage.getItem("level")) || 1;
-let collectibles = [];
 let lastPosition = null;
-
 let run = null;
 let stationarySeconds = 0;
 
 document.getElementById("points").textContent = points;
 document.getElementById("level").textContent = level;
 
-// =======================
+// ======================
 // LEVELS
-// =======================
+// ======================
 function updateLevel() {
   const newLevel = Math.floor(points / 100) + 1;
   if (newLevel !== level) {
@@ -140,38 +124,28 @@ function updateLevel() {
   }
 }
 
-// =======================
-// COLLECTIBLES (MANUAL)
-// =======================
-map.on('click', e => {
-  const marker = L.circleMarker(e.latlng, { radius: 6, color: 'gold' }).addTo(map);
-  collectibles.push({
-    lat: e.latlng.lat,
-    lng: e.latlng.lng,
-    marker,
-    radius: 8,
-    points: 10
-  });
-});
-
-// =======================
-// RUN LOGIC
-// =======================
+// ======================
+// RUNS
+// ======================
 function startRun(pos) {
   run = {
     start: Date.now(),
     distance: 0,
     path: [[pos.lat, pos.lng]],
-    name: generateRunName(),
-    date: new Date().toLocaleString()
+    date: new Date().toLocaleString(),
+    name: generateRunName()
   };
+
+  drawGhost();
 }
 
 function endRun() {
   if (!run) return;
+
   const time = Math.floor((Date.now() - run.start) / 1000);
   document.getElementById("runStats").innerHTML =
     `Time: ${time}s<br>Distance: ${run.distance.toFixed(1)} m`;
+
   document.getElementById("runNameInput").value = run.name;
   document.getElementById("runSummary").style.display = "flex";
 }
@@ -181,35 +155,53 @@ function saveRun() {
   run.name = document.getElementById("runNameInput").value;
   runs.push(run);
   localStorage.setItem("runs", JSON.stringify(runs));
+
   run = null;
   stationarySeconds = 0;
+
   document.getElementById("runSummary").style.display = "none";
 }
 
 function generateRunName() {
-  const names = ["Stormline", "Powder Snake", "White Fang", "Glade Rush", "Frostbite"];
+  const names = ["Powderline", "Frostbite", "White Rush", "Stormpath"];
   return names[Math.floor(Math.random() * names.length)];
 }
 
-// =======================
+// ======================
+// GHOST RUN
+// ======================
+function drawGhost() {
+  const runs = JSON.parse(localStorage.getItem("runs")) || [];
+  if (runs.length === 0) return;
+
+  const best = runs.reduce((a,b) => b.distance > a.distance ? b : a);
+
+  if (ghostLine) map.removeLayer(ghostLine);
+
+  ghostLine = L.polyline(best.path, {
+    color: '#00ffff',
+    weight: 4,
+    opacity: 0.35,
+    dashArray: '6,6'
+  }).addTo(map);
+}
+
+// ======================
 // RUN HISTORY UI
-// =======================
+// ======================
 function openRunHistory() {
   const list = document.getElementById("runList");
   list.innerHTML = "";
-  const runs = JSON.parse(localStorage.getItem("runs")) || [];
 
+  const runs = JSON.parse(localStorage.getItem("runs")) || [];
   if (runs.length === 0) {
     list.innerHTML = "<p>No runs yet.</p>";
   } else {
     runs.forEach(r => {
-      const div = document.createElement("div");
-      div.className = "runItem";
-      div.innerHTML =
-        `<strong>${r.name}</strong><br>
-         ${r.date}<br>
-         ${r.distance.toFixed(1)} m`;
-      list.appendChild(div);
+      const d = document.createElement("div");
+      d.className = "runItem";
+      d.innerHTML = `<strong>${r.name}</strong><br>${r.date}<br>${r.distance.toFixed(1)} m`;
+      list.appendChild(d);
     });
   }
 
@@ -220,26 +212,52 @@ function closeRunHistory() {
   document.getElementById("runHistory").style.display = "none";
 }
 
-// =======================
-// GPS
-// =======================
+// ======================
+// GPS (FIXED)
+// ======================
 navigator.geolocation.watchPosition(pos => {
   const lat = pos.coords.latitude;
   const lng = pos.coords.longitude;
 
   document.getElementById("status").textContent = "GPS Active";
-  userMarker.setLatLng([lat,lng]);
-  map.setView([lat,lng], 18);
 
-  if (!lastPosition) {
-    lastPosition = [lat,lng];
+  if (!map) {
+    map = L.map('map').setView([lat, lng], 18);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+    userMarker = L.circleMarker([lat, lng], { radius: 8, color: '#00ffff' }).addTo(map);
+    lastPosition = [lat, lng];
     return;
   }
 
-  const distance = map.distance([lat,lng], lastPosition);
+  userMarker.setLatLng([lat, lng]);
+  map.panTo([lat, lng], { animate: false });
 
-  if (!run && distance > 10) startRun({lat,lng});
+  const distance = map.distance([lat, lng], lastPosition);
+
+  if (!run && distance > 8) startRun({lat, lng});
 
   if (run) {
     run.distance += distance;
-    run.path.push([l]()
+    run.path.push([lat, lng]);
+
+    if (distance < 0.5) {
+      stationarySeconds++;
+      if (stationarySeconds >= 10) endRun();
+    } else {
+      stationarySeconds = 0;
+    }
+  }
+
+  lastPosition = [lat, lng];
+
+}, err => {
+  document.getElementById("status").textContent = "GPS Error";
+}, {
+  enableHighAccuracy: true,
+  maximumAge: 0,
+  timeout: 15000
+});
+</script>
+
+</body>
+</html>
