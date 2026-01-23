@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>SnowMap – Stable Core</title>
+<title>SnowMap – Stable Core + Run History</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -29,7 +29,14 @@ html, body {
   font-size: 14px;
 }
 
-#runSummary {
+#hud button {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px;
+  font-size: 14px;
+}
+
+#runSummary, #runHistory {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.85);
@@ -39,21 +46,27 @@ html, body {
   z-index: 2000;
 }
 
-#runCard {
+.panel {
   background: #111;
   color: white;
   padding: 20px;
   border-radius: 12px;
   width: 90%;
   max-width: 400px;
-  text-align: center;
+  max-height: 80%;
+  overflow-y: auto;
 }
 
-#runCard input, #runCard button {
+.panel input, .panel button {
   width: 100%;
   padding: 10px;
   margin-top: 10px;
   font-size: 16px;
+}
+
+.runItem {
+  border-bottom: 1px solid #333;
+  padding: 8px 0;
 }
 </style>
 </head>
@@ -65,15 +78,26 @@ html, body {
 <div id="hud">
   Points: <span id="points">0</span><br>
   Level: <span id="level">1</span><br>
-  Status: <span id="status">Waiting for GPS</span>
+  Status: <span id="status">Waiting for GPS</span><br>
+  <button onclick="openRunHistory()">📘 Runs</button>
 </div>
 
+<!-- Run Summary -->
 <div id="runSummary">
-  <div id="runCard">
+  <div class="panel">
     <h2>🏁 Run Complete</h2>
     <p id="runStats"></p>
     <input id="runNameInput" placeholder="Name this run">
     <button onclick="saveRun()">Save Run</button>
+  </div>
+</div>
+
+<!-- Run History -->
+<div id="runHistory">
+  <div class="panel">
+    <h2>📘 Run History</h2>
+    <div id="runList"></div>
+    <button onclick="closeRunHistory()">Close</button>
   </div>
 </div>
 
@@ -88,10 +112,7 @@ html, body {
 const map = L.map('map').setView([0,0], 18);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-const userMarker = L.circleMarker([0,0], {
-  radius: 8,
-  color: '#00ffff'
-}).addTo(map);
+const userMarker = L.circleMarker([0,0], { radius: 8, color: '#00ffff' }).addTo(map);
 
 // =======================
 // STATE
@@ -101,7 +122,6 @@ let level = Number(localStorage.getItem("level")) || 1;
 let collectibles = [];
 let lastPosition = null;
 
-// Run state
 let run = null;
 let stationarySeconds = 0;
 
@@ -121,14 +141,10 @@ function updateLevel() {
 }
 
 // =======================
-// COLLECTIBLES (MANUAL PLACEMENT)
+// COLLECTIBLES (MANUAL)
 // =======================
 map.on('click', e => {
-  const marker = L.circleMarker(e.latlng, {
-    radius: 6,
-    color: 'gold'
-  }).addTo(map);
-
+  const marker = L.circleMarker(e.latlng, { radius: 6, color: 'gold' }).addTo(map);
   collectibles.push({
     lat: e.latlng.lat,
     lng: e.latlng.lng,
@@ -146,17 +162,16 @@ function startRun(pos) {
     start: Date.now(),
     distance: 0,
     path: [[pos.lat, pos.lng]],
-    name: generateRunName()
+    name: generateRunName(),
+    date: new Date().toLocaleString()
   };
 }
 
 function endRun() {
   if (!run) return;
-
   const time = Math.floor((Date.now() - run.start) / 1000);
   document.getElementById("runStats").innerHTML =
     `Time: ${time}s<br>Distance: ${run.distance.toFixed(1)} m`;
-
   document.getElementById("runNameInput").value = run.name;
   document.getElementById("runSummary").style.display = "flex";
 }
@@ -166,7 +181,6 @@ function saveRun() {
   run.name = document.getElementById("runNameInput").value;
   runs.push(run);
   localStorage.setItem("runs", JSON.stringify(runs));
-
   run = null;
   stationarySeconds = 0;
   document.getElementById("runSummary").style.display = "none";
@@ -178,6 +192,35 @@ function generateRunName() {
 }
 
 // =======================
+// RUN HISTORY UI
+// =======================
+function openRunHistory() {
+  const list = document.getElementById("runList");
+  list.innerHTML = "";
+  const runs = JSON.parse(localStorage.getItem("runs")) || [];
+
+  if (runs.length === 0) {
+    list.innerHTML = "<p>No runs yet.</p>";
+  } else {
+    runs.forEach(r => {
+      const div = document.createElement("div");
+      div.className = "runItem";
+      div.innerHTML =
+        `<strong>${r.name}</strong><br>
+         ${r.date}<br>
+         ${r.distance.toFixed(1)} m`;
+      list.appendChild(div);
+    });
+  }
+
+  document.getElementById("runHistory").style.display = "flex";
+}
+
+function closeRunHistory() {
+  document.getElementById("runHistory").style.display = "none";
+}
+
+// =======================
 // GPS
 // =======================
 navigator.geolocation.watchPosition(pos => {
@@ -185,7 +228,6 @@ navigator.geolocation.watchPosition(pos => {
   const lng = pos.coords.longitude;
 
   document.getElementById("status").textContent = "GPS Active";
-
   userMarker.setLatLng([lat,lng]);
   map.setView([lat,lng], 18);
 
@@ -196,49 +238,8 @@ navigator.geolocation.watchPosition(pos => {
 
   const distance = map.distance([lat,lng], lastPosition);
 
-  // Start run after meaningful movement
-  if (!run && distance > 10) {
-    startRun({lat,lng});
-  }
+  if (!run && distance > 10) startRun({lat,lng});
 
-  // Track run
   if (run) {
     run.distance += distance;
-    run.path.push([lat,lng]);
-
-    if (distance < 1) {
-      stationarySeconds++;
-      if (stationarySeconds >= 10) endRun();
-    } else {
-      stationarySeconds = 0;
-    }
-  }
-
-  // Collectibles
-  collectibles.forEach(c => {
-    if (!c.marker) return;
-    const d = map.distance([lat,lng],[c.lat,c.lng]);
-    if (d < c.radius) {
-      points += c.points;
-      localStorage.setItem("points", points);
-      document.getElementById("points").textContent = points;
-      updateLevel();
-      map.removeLayer(c.marker);
-      c.marker = null;
-      document.getElementById("ding").play();
-    }
-  });
-
-  lastPosition = [lat,lng];
-
-}, err => {
-  document.getElementById("status").textContent = "GPS Error";
-}, {
-  enableHighAccuracy: true,
-  maximumAge: 500,
-  timeout: 10000
-});
-</script>
-
-</body>
-</html>
+    run.path.push([l]()
