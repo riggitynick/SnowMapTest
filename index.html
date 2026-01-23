@@ -1,14 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Snow Map AR Lite</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta charset="UTF-8">
+<title>Snow AR Game – Stable Core</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
 html, body {
@@ -20,69 +17,69 @@ html, body {
   font-family: system-ui, sans-serif;
 }
 
-/* CAMERA */
 #cameraFeed {
   position: fixed;
   inset: 0;
   object-fit: cover;
-  z-index: 0;
   display: none;
+  z-index: 0;
 }
 
-/* MAP */
 #map {
   position: fixed;
   inset: 0;
   z-index: 1;
 }
 
-/* RADAR */
-#radar {
+#hud {
   position: fixed;
-  bottom: 20px;
-  left: 20px;
-  width: 160px;
-  height: 160px;
-  border-radius: 50%;
-  background: rgba(0,0,0,0.55);
-  border: 2px solid #0ff;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+  background: rgba(0,0,0,0.7);
+  padding: 8px;
+  border-radius: 8px;
+  color: #0ff;
+  font-size: 14px;
+}
+
+#toggleAR {
+  margin-top: 6px;
+  background: none;
+  border: 1px solid #0ff;
+  color: #0ff;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+#arOverlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
   z-index: 3;
 }
 
-/* UI */
-#ui {
-  position: fixed;
-  top: 10px;
+.ar-item {
+  position: absolute;
   left: 50%;
-  transform: translateX(-50%);
-  z-index: 4;
-  display: flex;
-  gap: 10px;
-}
-
-button {
-  background: rgba(0,0,0,0.75);
+  top: 50%;
+  transform-origin: center;
   color: #0ff;
-  border: 1px solid #0ff;
-  padding: 6px 12px;
-  border-radius: 6px;
+  font-size: 20px;
 }
 </style>
 </head>
 
 <body>
 
-<!-- CAMERA -->
 <video id="cameraFeed" autoplay playsinline muted></video>
-
-<!-- MAP -->
 <div id="map"></div>
+<div id="arOverlay"></div>
 
-<!-- RADAR -->
-<canvas id="radar" width="160" height="160"></canvas>
-
-<!-- UI -->
-<div id="ui">
+<div id="hud">
+  <div>Points: <span id="points">0</span></div>
+  <div>Level: <span id="level">1</span></div>
+  <div>Run Time: <span id="runTime">0</span>s</div>
   <button id="toggleAR">Enable AR</button>
 </div>
 
@@ -90,120 +87,186 @@ button {
 
 <script>
 /* =========================
-   STATE
+   CORE STATE
 ========================= */
-let map, userMarker;
-let userLat = null, userLng = null;
+let map;
+let userLat = null, userLng = null, userHeading = 0;
 let arEnabled = false;
+
+let points = parseInt(localStorage.getItem("points")) || 0;
+let level = parseInt(localStorage.getItem("level")) || 1;
+
 const collectibles = [];
+const COLLECT_RADIUS = 10; // meters
 
 /* =========================
-   MAP + GPS
+   UI
 ========================= */
-function initMap() {
-  map = L.map("map").setView([0, 0], 17);
+const pointsEl = document.getElementById("points");
+const levelEl = document.getElementById("level");
+pointsEl.textContent = points;
+levelEl.textContent = level;
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19
+/* =========================
+   MAP
+========================= */
+map = L.map("map").setView([0,0], 18);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19
+}).addTo(map);
+
+map.on("click", e => {
+  if (arEnabled) return;
+
+  const marker = L.circleMarker(e.latlng, {
+    radius: 6,
+    color: "#0ff"
   }).addTo(map);
 
-  navigator.geolocation.watchPosition(
-    pos => {
-      userLat = pos.coords.latitude;
-      userLng = pos.coords.longitude;
+  collectibles.push({
+    lat: e.latlng.lat,
+    lng: e.latlng.lng,
+    collected: false,
+    marker
+  });
+});
 
-      if (!userMarker) {
-        userMarker = L.marker([userLat, userLng]).addTo(map);
-      } else {
-        userMarker.setLatLng([userLat, userLng]);
-      }
+/* =========================
+   GPS + HEADING
+========================= */
+navigator.geolocation.watchPosition(
+  pos => {
+    userLat = pos.coords.latitude;
+    userLng = pos.coords.longitude;
+    if (pos.coords.heading !== null) {
+      userHeading = pos.coords.heading;
+    }
 
-      map.setView([userLat, userLng]);
-    },
-    err => console.warn("GPS error", err),
-    { enableHighAccuracy: true, maximumAge: 1000 }
-  );
+    map.setView([userLat, userLng]);
+    checkCollectibles();
+  },
+  err => console.warn(err),
+  { enableHighAccuracy: true, maximumAge: 500 }
+);
 
-  map.on("click", e => {
-    if (arEnabled) return; // prevent placement in AR mode
+/* =========================
+   COLLECTIBLES
+========================= */
+function distanceMeters(aLat,aLng,bLat,bLng) {
+  const R = 6371000;
+  const dLat = (bLat-aLat)*Math.PI/180;
+  const dLng = (bLng-aLng)*Math.PI/180;
+  const x =
+    Math.sin(dLat/2)**2 +
+    Math.cos(aLat*Math.PI/180) *
+    Math.cos(bLat*Math.PI/180) *
+    Math.sin(dLng/2)**2;
+  return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+}
 
-    const marker = L.circleMarker(e.latlng, {
-      radius: 6,
-      color: "#0ff"
-    }).addTo(map);
+function checkCollectibles() {
+  if (!userLat) return;
 
-    collectibles.push({
-      lat: e.latlng.lat,
-      lng: e.latlng.lng,
-      marker
-    });
+  collectibles.forEach(c => {
+    if (c.collected) return;
+
+    const d = distanceMeters(userLat,userLng,c.lat,c.lng);
+    if (d < COLLECT_RADIUS) {
+      c.collected = true;
+      if (c.marker) map.removeLayer(c.marker);
+      awardPoints(10);
+    }
   });
 }
 
-/* =========================
-   RADAR
-========================= */
-const radar = document.getElementById("radar");
-const ctx = radar.getContext("2d");
-
-function drawRadar() {
-  ctx.clearRect(0, 0, 160, 160);
-
-  ctx.beginPath();
-  ctx.arc(80, 80, 75, 0, Math.PI * 2);
-  ctx.strokeStyle = "#0ff";
-  ctx.stroke();
-
-  ctx.fillStyle = "#0ff";
-  ctx.beginPath();
-  ctx.arc(80, 80, 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  requestAnimationFrame(drawRadar);
+function awardPoints(p) {
+  points += p;
+  if (points >= level * 100) {
+    level++;
+  }
+  pointsEl.textContent = points;
+  levelEl.textContent = level;
+  localStorage.setItem("points", points);
+  localStorage.setItem("level", level);
 }
 
 /* =========================
-   CAMERA / AR
+   AR VISUALIZATION
 ========================= */
-const cameraFeed = document.getElementById("cameraFeed");
-const mapDiv = document.getElementById("map");
+const arOverlay = document.getElementById("arOverlay");
+
+function updateAR() {
+  arOverlay.innerHTML = "";
+  if (!arEnabled || !userLat) return;
+
+  collectibles.forEach(c => {
+    if (c.collected) return;
+
+    const d = distanceMeters(userLat,userLng,c.lat,c.lng);
+    const bearing = Math.atan2(
+      Math.sin((c.lng-userLng)*Math.PI/180) *
+      Math.cos(c.lat*Math.PI/180),
+      Math.cos(userLat*Math.PI/180)*Math.sin(c.lat*Math.PI/180) -
+      Math.sin(userLat*Math.PI/180)*Math.cos(c.lat*Math.PI/180) *
+      Math.cos((c.lng-userLng)*Math.PI/180)
+    ) * 180/Math.PI;
+
+    const rel = ((bearing - userHeading + 540) % 360) - 180;
+
+    const el = document.createElement("div");
+    el.className = "ar-item";
+    el.style.transform = `translate(-50%, -50%) rotate(${rel}deg) translateY(-120px)`;
+    el.textContent = `⬆ ${Math.round(d)}m`;
+    arOverlay.appendChild(el);
+  });
+
+  requestAnimationFrame(updateAR);
+}
+
+/* =========================
+   AR TOGGLE
+========================= */
+const cam = document.getElementById("cameraFeed");
 const toggleAR = document.getElementById("toggleAR");
 
-async function startCamera() {
+async function startAR() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" },
-    audio: false
+    video: { facingMode: "environment" }
   });
-  cameraFeed.srcObject = stream;
-  cameraFeed.style.display = "block";
-
-  mapDiv.style.opacity = "0";
-  mapDiv.style.pointerEvents = "none";
+  cam.srcObject = stream;
+  cam.style.display = "block";
+  map.getContainer().style.opacity = "0";
+  map.getContainer().style.pointerEvents = "none";
+  arEnabled = true;
+  updateAR();
 }
 
-function stopCamera() {
-  if (cameraFeed.srcObject) {
-    cameraFeed.srcObject.getTracks().forEach(t => t.stop());
-  }
-  cameraFeed.srcObject = null;
-  cameraFeed.style.display = "none";
-
-  mapDiv.style.opacity = "1";
-  mapDiv.style.pointerEvents = "auto";
+function stopAR() {
+  if (cam.srcObject) cam.srcObject.getTracks().forEach(t=>t.stop());
+  cam.srcObject = null;
+  cam.style.display = "none";
+  map.getContainer().style.opacity = "1";
+  map.getContainer().style.pointerEvents = "auto";
+  arEnabled = false;
 }
 
 toggleAR.onclick = () => {
-  arEnabled = !arEnabled;
+  arEnabled ? stopAR() : startAR();
   toggleAR.textContent = arEnabled ? "Disable AR" : "Enable AR";
-  arEnabled ? startCamera() : stopCamera();
 };
 
 /* =========================
-   INIT
+   RUN TRACKING (basic)
 ========================= */
-initMap();
-drawRadar();
-</script>
+let runStart = null;
+setInterval(() => {
+  if (!userLat) return;
+  if (!runStart) runStart = Date.now();
+  document.getElementById("runTime").textContent =
+    Math.floor((Date.now()-runStart)/1000);
+}, 1000);
 
+</script>
 </body>
 </html>
