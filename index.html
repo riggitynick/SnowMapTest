@@ -5,14 +5,19 @@
 <title>Snow Map AR Lite</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
 
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+
 <style>
 html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  overflow: hidden;
   background: #000;
   font-family: system-ui, sans-serif;
-  overflow: hidden;
 }
 
 /* CAMERA */
@@ -52,14 +57,14 @@ html, body {
   transform: translateX(-50%);
   z-index: 4;
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
 button {
-  background: rgba(0,0,0,0.7);
+  background: rgba(0,0,0,0.75);
   color: #0ff;
   border: 1px solid #0ff;
-  padding: 6px 10px;
+  padding: 6px 12px;
   border-radius: 6px;
 }
 </style>
@@ -81,16 +86,26 @@ button {
   <button id="toggleAR">Enable AR</button>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script>
-/* ---------------------------
-   MAP + GPS (SAFE)
----------------------------- */
+/* =========================
+   STATE
+========================= */
 let map, userMarker;
 let userLat = null, userLng = null;
+let arEnabled = false;
+const collectibles = [];
 
+/* =========================
+   MAP + GPS
+========================= */
 function initMap() {
-  map = L.map('map').setView([0, 0], 16);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  map = L.map("map").setView([0, 0], 17);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19
+  }).addTo(map);
 
   navigator.geolocation.watchPosition(
     pos => {
@@ -102,21 +117,38 @@ function initMap() {
       } else {
         userMarker.setLatLng([userLat, userLng]);
       }
+
       map.setView([userLat, userLng]);
     },
     err => console.warn("GPS error", err),
     { enableHighAccuracy: true, maximumAge: 1000 }
   );
+
+  map.on("click", e => {
+    if (arEnabled) return; // prevent placement in AR mode
+
+    const marker = L.circleMarker(e.latlng, {
+      radius: 6,
+      color: "#0ff"
+    }).addTo(map);
+
+    collectibles.push({
+      lat: e.latlng.lat,
+      lng: e.latlng.lng,
+      marker
+    });
+  });
 }
 
-/* ---------------------------
-   RADAR (unchanged)
----------------------------- */
+/* =========================
+   RADAR
+========================= */
 const radar = document.getElementById("radar");
 const ctx = radar.getContext("2d");
 
 function drawRadar() {
   ctx.clearRect(0, 0, 160, 160);
+
   ctx.beginPath();
   ctx.arc(80, 80, 75, 0, Math.PI * 2);
   ctx.strokeStyle = "#0ff";
@@ -130,35 +162,34 @@ function drawRadar() {
   requestAnimationFrame(drawRadar);
 }
 
-/* ---------------------------
-   CAMERA (NEW)
----------------------------- */
-let arEnabled = false;
+/* =========================
+   CAMERA / AR
+========================= */
 const cameraFeed = document.getElementById("cameraFeed");
+const mapDiv = document.getElementById("map");
 const toggleAR = document.getElementById("toggleAR");
 
 async function startCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-      audio: false
-    });
-    cameraFeed.srcObject = stream;
-    cameraFeed.style.display = "block";
-    document.getElementById("map").style.opacity = "0.15";
-  } catch (e) {
-    alert("Camera access denied.");
-  }
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" },
+    audio: false
+  });
+  cameraFeed.srcObject = stream;
+  cameraFeed.style.display = "block";
+
+  mapDiv.style.opacity = "0";
+  mapDiv.style.pointerEvents = "none";
 }
 
 function stopCamera() {
-  const stream = cameraFeed.srcObject;
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
+  if (cameraFeed.srcObject) {
+    cameraFeed.srcObject.getTracks().forEach(t => t.stop());
   }
   cameraFeed.srcObject = null;
   cameraFeed.style.display = "none";
-  document.getElementById("map").style.opacity = "1";
+
+  mapDiv.style.opacity = "1";
+  mapDiv.style.pointerEvents = "auto";
 }
 
 toggleAR.onclick = () => {
@@ -167,19 +198,12 @@ toggleAR.onclick = () => {
   arEnabled ? startCamera() : stopCamera();
 };
 
-/* ---------------------------
-   START
----------------------------- */
+/* =========================
+   INIT
+========================= */
 initMap();
 drawRadar();
 </script>
-
-<!-- Leaflet -->
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 </body>
 </html>
