@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Snow AR Game – Stable Core</title>
+<title>Snow AR Game – Stable Visual Build</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -17,6 +17,7 @@ html, body {
   font-family: system-ui, sans-serif;
 }
 
+/* CAMERA */
 #cameraFeed {
   position: fixed;
   inset: 0;
@@ -25,12 +26,34 @@ html, body {
   z-index: 0;
 }
 
+/* MAP */
 #map {
   position: fixed;
   inset: 0;
   z-index: 1;
 }
 
+/* AR OVERLAY */
+#arOverlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* AR COLLECTIBLE */
+.ar-item {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-origin: center;
+  text-align: center;
+  font-size: 28px;
+  color: gold;
+  text-shadow: 0 0 10px rgba(255,215,0,0.8);
+}
+
+/* HUD */
 #hud {
   position: fixed;
   top: 10px;
@@ -43,29 +66,13 @@ html, body {
   font-size: 14px;
 }
 
-#toggleAR {
+button {
   margin-top: 6px;
   background: none;
   border: 1px solid #0ff;
   color: #0ff;
   padding: 4px 8px;
   border-radius: 6px;
-}
-
-#arOverlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 3;
-}
-
-.ar-item {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform-origin: center;
-  color: #0ff;
-  font-size: 20px;
 }
 </style>
 </head>
@@ -91,13 +98,14 @@ html, body {
 ========================= */
 let map;
 let userLat = null, userLng = null, userHeading = 0;
+let userMarker = null;
 let arEnabled = false;
 
 let points = parseInt(localStorage.getItem("points")) || 0;
 let level = parseInt(localStorage.getItem("level")) || 1;
 
 const collectibles = [];
-const COLLECT_RADIUS = 10; // meters
+const COLLECT_RADIUS = 10;
 
 /* =========================
    UI
@@ -116,12 +124,23 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19
 }).addTo(map);
 
+/* User marker */
+userMarker = L.circleMarker([0,0], {
+  radius: 8,
+  color: "#0ff",
+  fillColor: "#0ff",
+  fillOpacity: 1
+}).addTo(map);
+
+/* Place collectibles */
 map.on("click", e => {
   if (arEnabled) return;
 
   const marker = L.circleMarker(e.latlng, {
     radius: 6,
-    color: "#0ff"
+    color: "gold",
+    fillColor: "gold",
+    fillOpacity: 1
   }).addTo(map);
 
   collectibles.push({
@@ -143,6 +162,7 @@ navigator.geolocation.watchPosition(
       userHeading = pos.coords.heading;
     }
 
+    userMarker.setLatLng([userLat, userLng]);
     map.setView([userLat, userLng]);
     checkCollectibles();
   },
@@ -151,7 +171,7 @@ navigator.geolocation.watchPosition(
 );
 
 /* =========================
-   COLLECTIBLES
+   DISTANCE
 ========================= */
 function distanceMeters(aLat,aLng,bLat,bLng) {
   const R = 6371000;
@@ -165,6 +185,9 @@ function distanceMeters(aLat,aLng,bLat,bLng) {
   return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
 }
 
+/* =========================
+   COLLECT LOGIC
+========================= */
 function checkCollectibles() {
   if (!userLat) return;
 
@@ -182,9 +205,7 @@ function checkCollectibles() {
 
 function awardPoints(p) {
   points += p;
-  if (points >= level * 100) {
-    level++;
-  }
+  if (points >= level * 100) level++;
   pointsEl.textContent = points;
   levelEl.textContent = level;
   localStorage.setItem("points", points);
@@ -192,7 +213,7 @@ function awardPoints(p) {
 }
 
 /* =========================
-   AR VISUALIZATION
+   AR VISUALS
 ========================= */
 const arOverlay = document.getElementById("arOverlay");
 
@@ -204,9 +225,9 @@ function updateAR() {
     if (c.collected) return;
 
     const d = distanceMeters(userLat,userLng,c.lat,c.lng);
+
     const bearing = Math.atan2(
-      Math.sin((c.lng-userLng)*Math.PI/180) *
-      Math.cos(c.lat*Math.PI/180),
+      Math.sin((c.lng-userLng)*Math.PI/180) * Math.cos(c.lat*Math.PI/180),
       Math.cos(userLat*Math.PI/180)*Math.sin(c.lat*Math.PI/180) -
       Math.sin(userLat*Math.PI/180)*Math.cos(c.lat*Math.PI/180) *
       Math.cos((c.lng-userLng)*Math.PI/180)
@@ -216,8 +237,9 @@ function updateAR() {
 
     const el = document.createElement("div");
     el.className = "ar-item";
-    el.style.transform = `translate(-50%, -50%) rotate(${rel}deg) translateY(-120px)`;
-    el.textContent = `⬆ ${Math.round(d)}m`;
+    el.style.transform =
+      `translate(-50%, -50%) rotate(${rel}deg) translateY(-140px)`;
+    el.innerHTML = `⭐<br><span style="font-size:14px">${Math.round(d)}m</span>`;
     arOverlay.appendChild(el);
   });
 
@@ -257,7 +279,7 @@ toggleAR.onclick = () => {
 };
 
 /* =========================
-   RUN TRACKING (basic)
+   RUN TIMER
 ========================= */
 let runStart = null;
 setInterval(() => {
@@ -266,7 +288,7 @@ setInterval(() => {
   document.getElementById("runTime").textContent =
     Math.floor((Date.now()-runStart)/1000);
 }, 1000);
-
 </script>
+
 </body>
 </html>
