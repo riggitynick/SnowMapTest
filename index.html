@@ -1,293 +1,124 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Snow AR Game – Stable Visual Build</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 
-<style>
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  overflow: hidden;
-  background: #000;
-  font-family: system-ui, sans-serif;
-}
+  <!-- AR.js with GPS -->
+  <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar-gps.min.js"></script>
 
-/* CAMERA */
-#cameraFeed {
-  position: fixed;
-  inset: 0;
-  object-fit: cover;
-  display: none;
-  z-index: 0;
-}
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
 
-/* MAP */
-#map {
-  position: fixed;
-  inset: 0;
-  z-index: 1;
-}
-
-/* AR OVERLAY */
-#arOverlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 3;
-}
-
-/* AR COLLECTIBLE */
-.ar-item {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform-origin: center;
-  text-align: center;
-  font-size: 28px;
-  color: gold;
-  text-shadow: 0 0 10px rgba(255,215,0,0.8);
-}
-
-/* HUD */
-#hud {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 4;
-  background: rgba(0,0,0,0.7);
-  padding: 8px;
-  border-radius: 8px;
-  color: #0ff;
-  font-size: 14px;
-}
-
-button {
-  margin-top: 6px;
-  background: none;
-  border: 1px solid #0ff;
-  color: #0ff;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-</style>
+    #hud {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 16px;
+      z-index: 10;
+    }
+  </style>
 </head>
 
 <body>
 
-<video id="cameraFeed" autoplay playsinline muted></video>
-<div id="map"></div>
-<div id="arOverlay"></div>
+<div id="hud">Score: <span id="score">0</span></div>
 
-<div id="hud">
-  <div>Points: <span id="points">0</span></div>
-  <div>Level: <span id="level">1</span></div>
-  <div>Run Time: <span id="runTime">0</span>s</div>
-  <button id="toggleAR">Enable AR</button>
-</div>
+<a-scene
+  embedded
+  vr-mode-ui="enabled: false"
+  arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false;"
+  renderer="antialias: true; alpha: true">
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- CAMERA WITH GPS -->
+  <a-camera
+    gps-camera
+    rotation-reader
+    look-controls="enabled: true">
+    
+    <!-- USER MARKER (always visible) -->
+    <a-ring
+      position="0 -1 -2"
+      radius-inner="0.25"
+      radius-outer="0.35"
+      color="#00ffcc"
+      material="opacity: 0.8"
+      rotation="-90 0 0">
+    </a-ring>
+
+  </a-camera>
+
+  <!-- COLLECTIBLE -->
+  <a-entity
+    gps-entity-place="latitude: 39.47693; longitude: -105.08197"
+    gps-collectible>
+    
+    <!-- Placeholder geometry (replace with glTF later) -->
+    <a-sphere
+      radius="1.2"
+      color="#ffcc00"
+      animation="property: rotation; to: 0 360 0; loop: true; dur: 3000">
+    </a-sphere>
+
+  </a-entity>
+
+</a-scene>
 
 <script>
-/* =========================
-   CORE STATE
-========================= */
-let map;
-let userLat = null, userLng = null, userHeading = 0;
-let userMarker = null;
-let arEnabled = false;
+/* -----------------------------
+   GAME STATE
+------------------------------ */
+let score = 0;
+const scoreEl = document.getElementById('score');
 
-let points = parseInt(localStorage.getItem("points")) || 0;
-let level = parseInt(localStorage.getItem("level")) || 1;
-
-const collectibles = [];
-const COLLECT_RADIUS = 10;
-
-/* =========================
-   UI
-========================= */
-const pointsEl = document.getElementById("points");
-const levelEl = document.getElementById("level");
-pointsEl.textContent = points;
-levelEl.textContent = level;
-
-/* =========================
-   MAP
-========================= */
-map = L.map("map").setView([0,0], 18);
-
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19
-}).addTo(map);
-
-/* User marker */
-userMarker = L.circleMarker([0,0], {
-  radius: 8,
-  color: "#0ff",
-  fillColor: "#0ff",
-  fillOpacity: 1
-}).addTo(map);
-
-/* Place collectibles */
-map.on("click", e => {
-  if (arEnabled) return;
-
-  const marker = L.circleMarker(e.latlng, {
-    radius: 6,
-    color: "gold",
-    fillColor: "gold",
-    fillOpacity: 1
-  }).addTo(map);
-
-  collectibles.push({
-    lat: e.latlng.lat,
-    lng: e.latlng.lng,
-    collected: false,
-    marker
-  });
-});
-
-/* =========================
-   GPS + HEADING
-========================= */
-navigator.geolocation.watchPosition(
-  pos => {
-    userLat = pos.coords.latitude;
-    userLng = pos.coords.longitude;
-    if (pos.coords.heading !== null) {
-      userHeading = pos.coords.heading;
-    }
-
-    userMarker.setLatLng([userLat, userLng]);
-    map.setView([userLat, userLng]);
-    checkCollectibles();
+/* -----------------------------
+   GPS COLLECTIBLE COMPONENT
+------------------------------ */
+AFRAME.registerComponent('gps-collectible', {
+  schema: {
+    collectDistance: { type: 'number', default: 10 } // meters
   },
-  err => console.warn(err),
-  { enableHighAccuracy: true, maximumAge: 500 }
-);
 
-/* =========================
-   DISTANCE
-========================= */
-function distanceMeters(aLat,aLng,bLat,bLng) {
-  const R = 6371000;
-  const dLat = (bLat-aLat)*Math.PI/180;
-  const dLng = (bLng-aLng)*Math.PI/180;
-  const x =
-    Math.sin(dLat/2)**2 +
-    Math.cos(aLat*Math.PI/180) *
-    Math.cos(bLat*Math.PI/180) *
-    Math.sin(dLng/2)**2;
-  return 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
-}
+  init() {
+    this.collected = false;
+  },
 
-/* =========================
-   COLLECT LOGIC
-========================= */
-function checkCollectibles() {
-  if (!userLat) return;
+  tick() {
+    if (this.collected) return;
 
-  collectibles.forEach(c => {
-    if (c.collected) return;
+    const camera = document.querySelector('[gps-camera]');
+    if (!camera || !camera.components['gps-camera']) return;
 
-    const d = distanceMeters(userLat,userLng,c.lat,c.lng);
-    if (d < COLLECT_RADIUS) {
-      c.collected = true;
-      if (c.marker) map.removeLayer(c.marker);
-      awardPoints(10);
+    const camPos = camera.object3D.position;
+    const objPos = this.el.object3D.position;
+
+    const distance = camPos.distanceTo(objPos);
+
+    if (distance < this.data.collectDistance) {
+      this.collect();
     }
-  });
-}
+  },
 
-function awardPoints(p) {
-  points += p;
-  if (points >= level * 100) level++;
-  pointsEl.textContent = points;
-  levelEl.textContent = level;
-  localStorage.setItem("points", points);
-  localStorage.setItem("level", level);
-}
+  collect() {
+    this.collected = true;
 
-/* =========================
-   AR VISUALS
-========================= */
-const arOverlay = document.getElementById("arOverlay");
+    score += 1;
+    scoreEl.textContent = score;
 
-function updateAR() {
-  arOverlay.innerHTML = "";
-  if (!arEnabled || !userLat) return;
-
-  collectibles.forEach(c => {
-    if (c.collected) return;
-
-    const d = distanceMeters(userLat,userLng,c.lat,c.lng);
-
-    const bearing = Math.atan2(
-      Math.sin((c.lng-userLng)*Math.PI/180) * Math.cos(c.lat*Math.PI/180),
-      Math.cos(userLat*Math.PI/180)*Math.sin(c.lat*Math.PI/180) -
-      Math.sin(userLat*Math.PI/180)*Math.cos(c.lat*Math.PI/180) *
-      Math.cos((c.lng-userLng)*Math.PI/180)
-    ) * 180/Math.PI;
-
-    const rel = ((bearing - userHeading + 540) % 360) - 180;
-
-    const el = document.createElement("div");
-    el.className = "ar-item";
-    el.style.transform =
-      `translate(-50%, -50%) rotate(${rel}deg) translateY(-140px)`;
-    el.innerHTML = `⭐<br><span style="font-size:14px">${Math.round(d)}m</span>`;
-    arOverlay.appendChild(el);
-  });
-
-  requestAnimationFrame(updateAR);
-}
-
-/* =========================
-   AR TOGGLE
-========================= */
-const cam = document.getElementById("cameraFeed");
-const toggleAR = document.getElementById("toggleAR");
-
-async function startAR() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" }
-  });
-  cam.srcObject = stream;
-  cam.style.display = "block";
-  map.getContainer().style.opacity = "0";
-  map.getContainer().style.pointerEvents = "none";
-  arEnabled = true;
-  updateAR();
-}
-
-function stopAR() {
-  if (cam.srcObject) cam.srcObject.getTracks().forEach(t=>t.stop());
-  cam.srcObject = null;
-  cam.style.display = "none";
-  map.getContainer().style.opacity = "1";
-  map.getContainer().style.pointerEvents = "auto";
-  arEnabled = false;
-}
-
-toggleAR.onclick = () => {
-  arEnabled ? stopAR() : startAR();
-  toggleAR.textContent = arEnabled ? "Disable AR" : "Enable AR";
-};
-
-/* =========================
-   RUN TIMER
-========================= */
-let runStart = null;
-setInterval(() => {
-  if (!userLat) return;
-  if (!runStart) runStart = Date.now();
-  document.getElementById("runTime").textContent =
-    Math.floor((Date.now()-runStart)/1000);
-}, 1000);
+    this.el.parentNode.removeChild(this.el);
+  }
+});
 </script>
 
 </body>
